@@ -9,12 +9,16 @@ use p256::{
         sec1::{self, FromEncodedPoint, ToEncodedPoint},
         Field,
     },
-    AffinePoint, EncodedPoint, NistP256, ProjectivePoint, Scalar,
+    AffinePoint,  // point satisfying the curve
+    EncodedPoint, // compact representation of a point on curve for storing
+    NistP256, 
+    ProjectivePoint, // alternative representation of a point on curve for simplifying calculations
+    Scalar, // element of the finite field over which the elliptic curve
 };
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
-
+// for truncation of hashed_identifier
 const PREFIX_LEN: usize = 8;
 
 #[derive(Debug)]
@@ -149,9 +153,10 @@ fn encode_to_point(user_id: &Uuid) -> AffinePoint {
     }
 }
 
-/// Hash `b` to a point on the P-256 curve (map data on the curve) using the method in RFC 9380 using SHA-256.
+/// Hash `b` to a point on the P-256 curve (map data on the curve) using the method in RFC 9380 using SHA-256
 fn hash_to_curve(b: u64) -> ProjectivePoint {
-    NistP256::hash_from_bytes::<ExpandMsgXmd<Sha256>>(&[&b.to_be_bytes()], &[b"zk-cds-prototype"])
+    // additional context string in Expand-Message-XMD method helps in domain separation  ensure that distinct inputs to the hash function produce distinct outputs, even if the inputs have the same byte representation. By including this context string, it helps prevent any potential clashes or collisions in the hashing process in the hash function
+    NistP256::hash_from_bytes::<ExpandMsgXmd<Sha256>>(&[&b.to_be_bytes()], &[b"rumi"]) 
         .expect("Should produce a valid point")
 }
 
