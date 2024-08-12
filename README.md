@@ -18,5 +18,5 @@ For example, suppose we are using a messaging app, you often see that the app re
 
 ### Elliptic Curve Cryptography
 
-The best blog to learn ECC that I could find out was [this](tab:https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! 
+The best blog to learn ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! 
 
