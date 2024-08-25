@@ -2,7 +2,6 @@
 A simple Path ORAM implementation
 */
 
-use blake3::Hasher;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

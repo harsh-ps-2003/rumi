@@ -1,8 +1,7 @@
 mod oram;
 
 use crate::oram::{Operation, PathORAM};
-use ark_ff::{Field as ArkField, PrimeField};
-use generic_array::{typenum::U32, GenericArray};
+use generic_array::GenericArray;
 use p256::{
     elliptic_curve::{
         hash2curve::{ExpandMsgXmd, FromOkm, GroupDigest},
@@ -18,11 +17,10 @@ use p256::{
 };
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::digest::OutputSizeUser;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
-use zeroize::{Zeroize, Zeroizing}; // for zeroizing the buffer of sensitive data
+use zeroize::{Zeroize, Zeroizing};
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
@@ -62,7 +60,8 @@ impl Server {
         for (&identifier, user_id) in users {
             let hashed_identifier = sha256(identifier);
             let blinded_identifier_point = hash_to_curve(identifier) * server_secret;
-            let blinded_user_id = encode_to_point(user_id)
+            let user_id_point = encode_to_point(user_id);
+            let blinded_user_id = user_id_point
                 * server_secret
                 * Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
 
@@ -233,26 +232,23 @@ impl Client {
     }
 }
 
-/// Encodes a UUID to a point on the P-256 curve using a variable-time try-and-increment method. This is not used in an online setting due to its variable-time nature (number of iterations in the loop can vary based on the UUID being encoded, potentially leading to timing variations that could be exploited by attackers) .
+/// Encodes a UUID to a point on the P-256 curve using a hash-and-try method.
+/// This method is not constant-time but is suitable for this use case as the UUID is not secret.
 fn encode_to_point(user_id: &Uuid) -> AffinePoint {
-    // The first byte is reserved for encoding metadata (tag), and the remaining 32 bytes are used to store the UUID.
-    let mut buf = [0u8; 33];
-    buf[0] = sec1::Tag::Compact.into();
-    // copies the bytes of the UUID into the buffer
-    buf[1..17].copy_from_slice(user_id.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(user_id.as_bytes());
+    let mut counter = 0u64;
 
-    // enters a loop where it tries different values of a counter i to find a suitable encoding for the UUID.
-    let mut i = 0u128;
     loop {
-        // updates the last 16 bytes of the buffer (buf[17..]) with the bytes representing the current value of the counter i.
-        buf[17..].copy_from_slice(&i.to_le_bytes());
-        // It attempts to create an EncodedPoint from the buffer. If successful, it converts this encoded point into an AffinePoint and returns it.
-        if let Ok(encoded) = EncodedPoint::from_bytes(buf) {
-            if let Some(point) = AffinePoint::from_encoded_point(&encoded).into() {
-                return point;
-            }
+        let mut attempt = hasher.clone();
+        attempt.update(counter.to_le_bytes());
+        let hash = attempt.finalize();
+
+        if let Some(point) = AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(&hash).unwrap()).into() {
+            return point;
         }
-        i += 1;
+
+        counter += 1;
     }
 }
 
