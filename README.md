@@ -61,11 +61,14 @@ This enhances the privacy and confidentiality of the client's data and prevents 
 
 ### References
 
+Refer to [How Signal uses ORAMs](https://signal.org/blog/building-faster-oram/) to understand the technology more practically!
+
 The best blog to learn ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! The idea of Zero Knowledge Set Membership comes from [this](https://eprint.iacr.org/2021/1672.pdf) paper paired with the simple Path ORAM coming from [this](https://eprint.iacr.org/2013/280.pdf) paper.
 
 ### Path forward...
 
 1. Add support for Private Information Retrieval (PIR) to further reduce server knowledge. Think about IT-PIR (if distributed servers are involved), cPIR (using Homomorphic encryptions but huge computational overhead). Try tinkering with Hybrid PIR-ORAM scheme referenced in [this](https://arxiv.org/pdf/1904.05452) paper. Use of PIR has significant performance tradeoffs!
-2. Implement a Cuckoo hashing scheme improved by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security concerns!
+2. Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
 3. Implement a secure update mechanism using ZKPs.
 4. Tackle side channel attacks!
+5. Add server-client setup for demo, although its a library!
