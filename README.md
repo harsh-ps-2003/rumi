@@ -1,8 +1,7 @@
 # RUMI
 
-A hypothetical Zero Knowledge discovery service design for mapping distinct identifiers!
+A ZK Path ORAM discovery service design for mapping distinct identifiers!
 
-The term "zero-knowledge" refers to the concept of minimizing the amount of information the server learns during interactions with clients.
 
 ## Flow 
 
@@ -12,7 +11,7 @@ The term "zero-knowledge" refers to the concept of minimizing the amount of info
     4. Client un-blinds the double blinded identifier point using the inverse of secret that only the client has.
     5. If match is found in server response, client calculates the un-blinded userID point from hashed identifier which is further decoded to UUID
 
-The benefit of this is that the server only learns about the association between the identifiers when the client explicitly requests it. This means that the server does not have access to the complete list of identifiers of any client unless the client chooses to share that information. The blinding process ensures that the identifiers are obscured before transmission to the server, and the server only receives blinded data along with hash prefixes. Without the ability to reverse the blinding process (which requires knowledge of the client's secret key), the server cannot directly link the blinded identifiers to the original identifiers or perform any meaningful analysis on them. This enhances the privacy and confidentiality of the client's data and prevents the server from having unrestricted access to sensitive information. Also the client can refer identifier only when they know the other corresponding identifier, not offline guesses would work. The server does retain some information (N-bit prefixes of hashed identifiers and Double-blinded points), but server cannot directly link this data to the original identifiers without the client's secret key so its safe!
+The benefit of this is that the server only learns about the association between the identifiers when the client explicitly requests it. This means that the server does not have access to the complete list of identifiers of any client unless the client chooses to share that information. The blinding process ensures that the identifiers are obscured before transmission to the server, and the server only receives blinded data along with hash prefixes. Without the ability to reverse the blinding process (which requires knowledge of the client's secret key), the server cannot directly link the blinded identifiers to the original identifiers or perform any meaningful analysis on them. This enhances the privacy and confidentiality of the client's data and prevents the server from having unrestricted access to sensitive information. Also the client can refer identifier only when they know the other corresponding identifier, not offline guesses would work. The server does retain some information (N-bit prefixes of hashed identifiers and Double-blinded points), but server cannot directly link this data to the original identifiers without the client's secret key so its safe! The use of Path ORAM enhances privacy by obfuscating access patterns, making it harder for attackers to infer information based on data access.
 
 For example, suppose we are using a messaging app, you often see that the app requires access to all your contacts, which you don't want to, but you are forced to! Traditionally, the server will store your contacts and if the server's security is compromised or if there are vulnerabilities, this metadata could potentially be accessed by unauthorized parties. In case of zero-knowledge discovery service, the server only know about a specific contact limited to the interaction in messaging app as the server receives blinded data from client without access to original information. The server's knowledge of contacts is secure and limited to the current interaction. Once the interaction is completed, the server does not retain information that could compromise the privacy. This ensures that the server only learns about data involved in the immediate interaction.
 
@@ -20,3 +19,11 @@ For example, suppose we are using a messaging app, you often see that the app re
 ### Elliptic Curve Cryptography
 
 The best blog to learn ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! 
+
+### TODO 
+
+2. Add support for Private Information Retrieval (PIR) to further reduce server knowledge.
+1. Implement a Cuckoo hashing scheme to improve efficiency and reduce the need for large buckets instead of using Simple Path ORAM!
+4. Add support for [Zero-Knowledge Set Membership](https://eprint.iacr.org/2021/1672.pdf) proofs to allow clients to prove they know a valid identifier without revealing it. Continue using ECC-based blinding for the actual data retrieval.
+5. Implement a secure update mechanism using zero-knowledge proofs.
+6. Add batching support for more efficient bulk operations.

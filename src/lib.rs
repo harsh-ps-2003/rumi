@@ -1,3 +1,5 @@
+mod oram;
+
 use std::collections::HashMap;
 use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -15,16 +17,25 @@ use p256::{
     ProjectivePoint, // alternative representation of a point on curve for simplifying calculations
     Scalar, // element of the finite field over which the elliptic curve
 };
+use serde::{Serialize, Deserialize};
+use zeroize::{Zeroize, Zeroizing};
+use crate::oram::{PathORAM, Operation};
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
 // for truncation of hashed_identifier
 const PREFIX_LEN: usize = 8;
 
+#[derive(Serialize, Deserialize)]
+struct ORAMBlock {
+    blinded_identifier: EncodedPoint,
+    blinded_user_id: EncodedPoint,
+}
+
 #[derive(Debug)]
 pub struct Server {
     server_secret: Scalar,
-    buckets: HashMap<Prefix, HashMap<EncodedPoint, EncodedPoint>>,
+    oram: PathORAM,
 }
 
 pub struct Client {
@@ -33,37 +44,62 @@ pub struct Client {
 
 impl Server {
     /// Create new server with a random secret and the given book of identifier and userID
-    pub fn new(rng: impl CryptoRng + RngCore, users: &HashMap<u64, Uuid>) -> Server {
-        let server_secret = Scalar::random(rng);
-        // Blinding is a technique used to obscure sensitive data before performing operations on it
-        // Blind the book and group it into buckets by hash prefix
-        let mut buckets = HashMap::new();
+    pub fn new(rng: &mut (impl CryptoRng + RngCore), users: &HashMap<u64, Uuid>) -> Server {
+        let mut rng = rng;
+        let server_secret = Scalar::random(&mut rng);
+        let mut oram = PathORAM::new();
+
         for (&identifier, user_id) in users {
-            // Hash the identifier
             let hashed_identifier = sha256(identifier);
-
-            // Hash the identifier to a point on the curve and blind it with the server secret
             let blinded_identifier_point = hash_to_curve(identifier) * server_secret;
-
-            // Encode the user ID as a point and blind it with both the server's secret and the hash
-            // of the identifier
             let blinded_user_id = encode_to_point(user_id) * server_secret * Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
 
-            // Record the (prefix, blinded_identifier_point, blinded_user_id) row
-            // Organizing the blinded data into buckets based on hash prefixes
-            buckets.entry(prefix(&hashed_identifier)).or_insert_with(HashMap::new).insert(
-                blinded_identifier_point.to_affine().to_encoded_point(true),
-                blinded_user_id.to_affine().to_encoded_point(true),
-            );
+            let block = ORAMBlock {
+                blinded_identifier: blinded_identifier_point.to_affine().to_encoded_point(true),
+                blinded_user_id: blinded_user_id.to_affine().to_encoded_point(true),
+            };
+
+            oram.access(Operation::Write, identifier, Some(bincode::serialize(&block).unwrap()), &mut rng);
         }
 
-        Server { server_secret, buckets }
+        Server { server_secret, oram }
     }
 
     /// Retrieves a hashmap of blinded identifier points and corresponding user ID points based on a given hash prefix
-    pub fn find_bucket(&self, prefix: Prefix) -> HashMap<EncodedPoint, EncodedPoint> {
-        // Find the bucket of blinded identifier and user ID points.
-        self.buckets.get(&prefix).cloned().unwrap_or_default()
+    pub fn find_bucket(&mut self, hashprefix: Prefix, rng: &mut (impl CryptoRng + RngCore)) -> HashMap<EncodedPoint, EncodedPoint> {
+        let mut result = HashMap::new();
+        let mut zeroizing_buffer = Zeroizing::new(Vec::new());
+
+        // Perform a fixed number of accesses regardless of actual number of matches
+        const FIXED_ACCESSES: usize = 1000;
+        // Maximum delay in milliseconds
+        const MAX_DELAY_MS: u64 = 10;
+
+        for _ in 0..FIXED_ACCESSES {
+            let id = rng.next_u64(); // Random ID for each access for making it more difficult to guess the number of matches
+            let is_real_access = prefix(&sha256(id)) == hashprefix;
+
+            // Explicitly zeroizes the buffer before each use to ensure no sensitive data leaks between accesses.
+            if let Some(data) = self.oram.access(Operation::Read, id, None, rng) {
+                zeroizing_buffer.zeroize();
+                zeroizing_buffer.extend_from_slice(&data);
+
+                if is_real_access {
+                    if let Ok(block) = bincode::deserialize::<ORAMBlock>(&zeroizing_buffer) {
+                        result.insert(block.blinded_identifier, block.blinded_user_id);
+                    }
+                }
+            }
+
+            // Perform a dummy write to mask the operation type
+            let dummy_data = vec![0u8; 64]; // Adjust size as needed
+            self.oram.access(Operation::Write, rng.next_u64(), Some(dummy_data), rng);
+
+            // Add a random delay
+            std::thread::sleep(std::time::Duration::from_millis(rng.next_u64() % MAX_DELAY_MS));
+        }
+
+        result
     }
 
     /// Attempts to reverse the blinding of a user ID point to recover and return the original UUID
@@ -129,7 +165,6 @@ impl Client {
         }
     }
 }
-
 /// Encodes a UUID to a point on the P-256 curve using a variable-time try-and-increment method. This is not used in an online setting due to its variable-time nature (number of iterations in the loop can vary based on the UUID being encoded, potentially leading to timing variations that could be exploited by attackers) .
 fn encode_to_point(user_id: &Uuid) -> AffinePoint {
     // The first byte is reserved for encoding metadata (tag), and the remaining 32 bytes are used to store the UUID.
