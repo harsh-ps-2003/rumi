@@ -1,7 +1,6 @@
 mod oram;
 
 use crate::oram::{Operation, PathORAM};
-use generic_array::GenericArray;
 use p256::{
     elliptic_curve::{
         hash2curve::{ExpandMsgXmd, FromOkm, GroupDigest},
@@ -154,12 +153,11 @@ impl Server {
             .to_encoded_point(true)
     }
 
-    // Add this new method to get the public set from ORAM
+    // get public key set from ORAM
     pub fn get_public_set(&self) -> Vec<u64> {
         self.oram.get_all_identifiers()
     }
 
-    // Add this new method to verify ZKSM proof
     fn verify_zksm_proof(&self, proof: &ZKSMProof) -> bool {
         let public_set = self.get_public_set();
         verify_zksm_proof(&public_set, proof)
@@ -244,11 +242,23 @@ fn encode_to_point(user_id: &Uuid) -> AffinePoint {
         attempt.update(counter.to_le_bytes());
         let hash = attempt.finalize();
 
-        if let Some(point) = AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(&hash).unwrap()).into() {
+        // Create a compressed point format
+        let mut encoded = vec![0x02]; // Start with 0x02 for even Y or 0x03 for odd Y
+        encoded.extend_from_slice(&hash[0..32]); // Take first 32 bytes for X coordinate
+
+        // Try to create a point from the encoded bytes
+        if let Some(point) = AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(&encoded).unwrap_or_default()).into() {
             return point;
         }
 
         counter += 1;
+        if counter > 1000 { // Add a reasonable limit to prevent infinite loops
+            // If we can't find a valid point after 1000 attempts, start with a different initial hash
+            hasher = Sha256::new();
+            hasher.update(&counter.to_le_bytes());
+            hasher.update(user_id.as_bytes());
+            counter = 0;
+        }
     }
 }
 
@@ -274,7 +284,6 @@ fn prefix(bytes: &[u8]) -> Prefix {
         .expect("Should be at least 8 bytes long")
 }
 
-// Add these new functions for ZKSM proof generation and verification
 fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     let mut rng = rand::thread_rng();
     let r = Scalar::random(&mut rng);
@@ -298,6 +307,8 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
 }
 
 fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
+    println!("Verifying ZKSM proof: {:?}", proof);
+    println!("Public set size: {}", public_set.len());
     let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
     let challenge = hash_to_scalar(
         &[
@@ -308,18 +319,26 @@ fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     );
 
     // Check if the proof is valid for any element in the public set
-    public_set.iter().any(|&x| {
+    let result = public_set.iter().any(|&x| {
         let lhs = ProjectivePoint::from(commitment_point) + hash_to_curve(x) * proof.challenge;
         let rhs = hash_to_curve(x) * proof.response;
-        lhs.to_affine() == rhs.to_affine()
-    })
+        let equal = lhs.to_affine() == rhs.to_affine();
+        if equal {
+            println!("Found matching element: {}", x);
+        }
+        equal
+    });
+    
+    println!("ZKSM verification result: {}", result);
+    result
 }
 
 // Helper function to hash to a scalar
 fn hash_to_scalar(data: &[u8]) -> Scalar {
     let hash = sha2::Sha256::digest(data);
-    let array = GenericArray::from_slice(hash.as_slice());
-    Scalar::from_okm(array)
+    let mut okm = [0u8; 48];
+    okm[..32].copy_from_slice(&hash);
+    Scalar::from_okm(&okm.into())
 }
 
 // Helper function to serialize the public set

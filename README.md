@@ -23,6 +23,10 @@ The privacy guarantees are:
 * Whether queries succeeded (due to fixed-size responses)
 * Database contents or size
 
+## Demo
+
+To start the server, run `cargo run --bin server` in one terminal. The server will start with 100 demo identifiers (1000000000 through 1000000099). Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
+
 ## How it works?
 
 Cryptography used :
@@ -98,7 +102,6 @@ The best blog to learn ECC that I could find out was [this](https://andrea.corbe
 2. Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
 3. Implement a secure update mechanism using ZKPs.
 4. Tackle side channel attacks!
-5. Add server-client setup for demo, although its a library!
 
 ## Disclaimer
 

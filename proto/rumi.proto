@@ -1,0 +1,21 @@
+syntax = "proto3";
+package rumi;
+
+service Discovery {
+    rpc Find (FindRequest) returns (FindResponse);
+}
+
+message FindRequest {
+    bytes hash_prefix = 1;
+    bytes blinded_identifier = 2;
+    string zksm_proof = 3;
+}
+
+message BucketEntry {
+    bytes blinded_identifier = 1;
+    bytes blinded_user_id = 2;
+}
+
+message FindResponse {
+    repeated BucketEntry entries = 1;
+}
