@@ -25,6 +25,7 @@ use zeroize::{Zeroize, Zeroizing};
 pub type Prefix = [u8; PREFIX_LEN];
 // for truncation of hashed_identifier
 const PREFIX_LEN: usize = 8;
+const FIXED_ACCESSES: usize = 1000;
 
 #[derive(Serialize, Deserialize)]
 struct ORAMBlock {
@@ -86,7 +87,7 @@ impl Server {
     /// Retrieves a hashmap of blinded identifier points and corresponding user ID points based on a given hash prefix
     pub fn find_bucket(
         &mut self,
-        hashprefix: Prefix,
+        prefix: Prefix,
         zksm_proof: &ZKSMProof,
         rng: &mut (impl CryptoRng + RngCore),
     ) -> Option<HashMap<EncodedPoint, EncodedPoint>> {
@@ -95,38 +96,34 @@ impl Server {
         }
 
         let mut result = HashMap::new();
-        let mut zeroizing_buffer = Zeroizing::new(Vec::new());
+        let mut rng = rng;
 
-        // Perform a fixed number of accesses regardless of actual number of matches
-        const FIXED_ACCESSES: usize = 1000;
-        // Maximum delay in milliseconds
-        const MAX_DELAY_MS: u64 = 10;
+        // Get all identifiers that match the prefix
+        let matching_ids: Vec<u64> = self.oram
+            .get_all_identifiers()
+            .into_iter()
+            .filter(|&id| {
+                let id_hash = sha256(id);
+                id_hash[..PREFIX_LEN] == prefix
+            })
+            .collect();
 
-        for _ in 0..FIXED_ACCESSES {
-            let id = rng.next_u64(); // Random ID for each access for making it more difficult to guess the number of matches
-            let is_real_access = prefix(&sha256(id)) == hashprefix;
+        let matches_count = matching_ids.len();
 
-            // Explicitly zeroizes the buffer before each use to ensure no sensitive data leaks between accesses.
-            if let Some(data) = self.oram.access(Operation::Read, id, None, rng) {
-                zeroizing_buffer.zeroize();
-                zeroizing_buffer.extend_from_slice(&data);
-
-                if is_real_access {
-                    if let Ok(block) = bincode::deserialize::<ORAMBlock>(&zeroizing_buffer) {
-                        result.insert(block.blinded_identifier, block.blinded_user_id);
-                    }
+        // For each matching ID, retrieve its data from ORAM
+        for id in matching_ids {
+            if let Some(data) = self.oram.access(Operation::Read, id, None, &mut rng) {
+                if let Ok(block) = bincode::deserialize::<ORAMBlock>(&data) {
+                    result.insert(block.blinded_identifier, block.blinded_user_id);
                 }
             }
+        }
 
-            // Perform a dummy write to mask the operation type
-            let dummy_data = vec![0u8; 64]; // Adjust size as needed
-            self.oram
-                .access(Operation::Write, rng.next_u64(), Some(dummy_data), rng);
-
-            // Add a random delay
-            std::thread::sleep(std::time::Duration::from_millis(
-                rng.next_u64() % MAX_DELAY_MS,
-            ));
+        // Perform dummy accesses to mask the number of real matches
+        let dummy_count = FIXED_ACCESSES - matches_count;
+        for _ in 0..dummy_count {
+            let dummy_id = rng.next_u64();
+            let _ = self.oram.access(Operation::Read, dummy_id, None, &mut rng);
         }
 
         Some(result)
@@ -155,7 +152,9 @@ impl Server {
 
     // get public key set from ORAM
     pub fn get_public_set(&self) -> Vec<u64> {
-        self.oram.get_all_identifiers()
+        let mut public_set = self.oram.get_all_identifiers();
+        public_set.sort(); 
+        public_set
     }
 
     fn verify_zksm_proof(&self, proof: &ZKSMProof) -> bool {
@@ -184,12 +183,18 @@ impl Client {
         let hashed_identifier = sha256(identifier);
         let client_blinded_identifier_point = hash_to_curve(identifier) * self.client_secret;
         let zksm_proof = generate_zksm_proof(identifier, public_set);
+        println!("Client generated ZKSM proof: {:?}", zksm_proof);
 
+        let prefix = prefix(&hashed_identifier); 
+        let encoded_point = client_blinded_identifier_point
+                        .to_affine()
+                        .to_encoded_point(true);
+
+        println!("Client blinded point: {:?}", encoded_point);
+        println!("Client prefix: {:?}", prefix);
         (
-            prefix(&hashed_identifier),
-            client_blinded_identifier_point
-                .to_affine()
-                .to_encoded_point(true),
+            prefix,
+            encoded_point,
             zksm_proof,
         )
     }
@@ -285,22 +290,48 @@ fn prefix(bytes: &[u8]) -> Prefix {
 }
 
 fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
+    // Verify identifier is in public set
+    if !public_set.contains(&identifier) {
+        panic!("Identifier not in public set");
+    }
+
     let mut rng = rand::thread_rng();
     let r = Scalar::random(&mut rng);
-    let commitment = hash_to_curve(identifier) * r;
+    let h_x = hash_to_curve(identifier);
+    let commitment = (h_x * r).to_affine();
+    let commitment_encoded = commitment.to_encoded_point(true);
+    println!("Client side:");
+    println!("Random r: {:?}", r);
+
+    println!("server Affine commitment: {:?}", commitment);
+    println!("server Encoded commitment: {:?}", commitment_encoded);
+
+    // Use sorted public set for challenge
+    let mut sorted_set = public_set.to_vec();
+    sorted_set.sort();
 
     // Challenge should be derived from the commitment and public parameters
     let challenge = hash_to_scalar(
         &[
-            commitment.to_affine().to_encoded_point(true).as_bytes(),
-            &serialize_public_set(public_set),
+            commitment_encoded.as_bytes()[1..].to_vec(),
+            serialize_public_set(public_set),
         ]
         .concat(),
     );
-    let response = r + Scalar::from(identifier) * challenge;
+
+    println!("Challenge input bytes: {:?}", 
+        &[
+            commitment_encoded.as_bytes()[1..].to_vec(),
+            serialize_public_set(public_set),
+        ].concat()
+    );
+
+    println!("Generated challenge: {:?}", challenge);
+    let response = r + challenge;
+    println!("Generated response: {:?}", response);
 
     ZKSMProof {
-        commitment: commitment.to_affine().to_encoded_point(true),
+        commitment: commitment_encoded,
         challenge,
         response,
     }
@@ -308,28 +339,50 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
 
 fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     println!("Verifying ZKSM proof: {:?}", proof);
+
+    // Sort public set for consistent challenge computation
+    let mut sorted_set = public_set.to_vec();
+    sorted_set.sort();
+
     println!("Public set size: {}", public_set.len());
+    println!("Public set range: {} to {}", public_set[0], public_set[public_set.len()-1]);
+
     let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
+    println!("commitment point: {:?}", commitment_point);
     let challenge = hash_to_scalar(
         &[
-            proof.commitment.as_bytes(),
-            &serialize_public_set(public_set),
+            proof.commitment.as_bytes()[1..].to_vec(),
+            serialize_public_set(public_set),
         ]
         .concat(),
     );
 
+    println!("Computed challenge: {:?}", challenge);
+    println!("Proof challenge: {:?}", proof.challenge);
+
+    // Check if challenges match
+    if challenge != proof.challenge {
+        println!("Challenge mismatch!");
+        return false;
+    }
+
     // Check if the proof is valid for any element in the public set
     let result = public_set.iter().any(|&x| {
-        let lhs = ProjectivePoint::from(commitment_point) + hash_to_curve(x) * proof.challenge;
-        let rhs = hash_to_curve(x) * proof.response;
+        let h_x = hash_to_curve(x);
+        let lhs = ProjectivePoint::from(commitment_point) + h_x * proof.challenge;
+        let rhs = h_x * proof.response;
+        println!("Verifying for x = {}:", x);
+        println!("Verification equation:");
+        println!("LHS (commitment + h(x)*challenge): {:?}", lhs);
+        println!("RHS (h(x)*response): {:?}", rhs);
         let equal = lhs.to_affine() == rhs.to_affine();
+        println!("valid {}", equal);
         if equal {
             println!("Found matching element: {}", x);
         }
         equal
     });
-    
-    println!("ZKSM verification result: {}", result);
+
     result
 }
 
@@ -343,5 +396,9 @@ fn hash_to_scalar(data: &[u8]) -> Scalar {
 
 // Helper function to serialize the public set
 fn serialize_public_set(public_set: &[u64]) -> Vec<u8> {
-    public_set.iter().flat_map(|&x| x.to_le_bytes()).collect()
+    let mut sorted = public_set.to_vec();
+    sorted.sort();
+    sorted.iter()
+        .flat_map(|&x| x.to_le_bytes())
+        .collect()
 }

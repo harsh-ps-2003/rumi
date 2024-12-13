@@ -57,41 +57,59 @@ impl PathORAM {
         data: Option<Vec<u8>>,
         rng: &mut (impl CryptoRng + RngCore),
     ) -> Option<Vec<u8>> {
-        // Retrieve the current path for the block and generate a new random path
+        // Get current path, or assign a random one if this is a new block
         let path = *self
             .position_map
             .entry(id)
             .or_insert_with(|| rng.next_u32() as usize % (1 << ORAM_DEPTH));
+        
+        // Generate new path for next access
         let new_path = rng.next_u32() as usize % (1 << ORAM_DEPTH);
-        self.position_map.insert(id, new_path);
-
-        // Read all blocks along the current path
+        
+        // Read path into stash
         let blocks = self.read_path(path);
-
-        // Add the read blocks to the stash
         self.stash.extend(blocks);
 
-        // Perform the requested operation (read or write)
+        // Find the target block in stash
         let result = match op {
-            Operation::Read => self
-                .stash
-                .iter()
+            Operation::Read => self.stash.iter()
                 .find(|b| b.id == id)
                 .map(|b| b.data.clone()),
             Operation::Write => {
                 if let Some(data) = data {
+                    // Update existing block or add new one
                     if let Some(block) = self.stash.iter_mut().find(|b| b.id == id) {
                         block.data = data;
                     } else {
                         self.stash.push(ORAMBlock { id, data });
                     }
+                    // Update position map
+                    self.position_map.insert(id, new_path);
                 }
                 None
             }
         };
 
-        // Write blocks back along the new path
+        // Write blocks back to tree
         self.write_path(new_path);
+
+        // Ensure stash doesn't grow unbounded
+        while self.stash.len() > BUCKET_SIZE * ORAM_DEPTH {
+            if let Some(block) = self.stash.pop() {
+                let block_path = self.position_map[&block.id];
+                let mut current_node = block_path + (1 << ORAM_DEPTH) - 1;
+                while current_node > 0 {
+                    if let Some(empty_slot) = self.tree[current_node]
+                        .iter_mut()
+                        .find(|slot| slot.is_none())
+                    {
+                        *empty_slot = Some(block);
+                        break;
+                    }
+                    current_node = (current_node - 1) / 2;
+                }
+            }
+        }
 
         result
     }
@@ -171,5 +189,25 @@ impl PathORAM {
 
     pub fn get_all_identifiers(&self) -> Vec<u64> {
         self.position_map.keys().cloned().collect()
+    }
+
+    // Helper function to check if a block exists
+    pub fn contains(&self, id: u64) -> bool {
+        if self.position_map.contains_key(&id) {
+            return true;
+        }
+        
+        // Also check stash and tree for the block
+        if self.stash.iter().any(|block| block.id == id) {
+            return true;
+        }
+
+        for bucket in &self.tree {
+            if bucket.iter().any(|block| block.as_ref().map_or(false, |b| b.id == id)) {
+                return true;
+            }
+        }
+
+        false
     }
 }

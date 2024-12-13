@@ -2,7 +2,14 @@ syntax = "proto3";
 package rumi;
 
 service Discovery {
+    rpc GetPublicSet (GetPublicSetRequest) returns (GetPublicSetResponse);
     rpc Find (FindRequest) returns (FindResponse);
+}
+
+message GetPublicSetRequest {}
+
+message GetPublicSetResponse {
+    repeated uint64 identifiers = 1;
 }
 
 message FindRequest {
@@ -11,11 +18,12 @@ message FindRequest {
     string zksm_proof = 3;
 }
 
+message FindResponse {
+    bytes double_blinded_identifier = 1;
+    repeated BucketEntry entries = 2;
+}
+
 message BucketEntry {
     bytes blinded_identifier = 1;
     bytes blinded_user_id = 2;
-}
-
-message FindResponse {
-    repeated BucketEntry entries = 1;
 }
