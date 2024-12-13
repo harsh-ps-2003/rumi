@@ -2,6 +2,44 @@
 
 A privacy-preserving discovery service design for mapping distinct identifiers to IDs without revealing any information to the server!
 
+## Protocol Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant O as ORAM
+
+    Note over C,S: Setup Phase
+    C->>S: Request public set of identifiers
+    S->>C: Return sorted public set
+
+    Note over C,S: Query Phase
+    C->>C: Generate random secret scalar
+    C->>C: Hash identifier to curve point
+    C->>C: Blind point with secret scalar
+    C->>C: Generate ZKSM proof
+    C->>C: Compute N-bit prefix
+
+    C->>S: Send (prefix, blinded point, ZKSM proof)
+    
+    Note over S: Server Processing
+    S->>S: Verify ZKSM proof
+    S->>S: Blind client point with server scalar
+    S->>O: Read path based on prefix
+    
+    loop Fixed Number of Times
+        S->>O: Perform dummy accesses
+    end
+
+    S->>C: Return (double-blinded point, matching entries)
+
+    Note over C: Client Processing
+    C->>C: Unblind received point
+    C->>C: Search for match in entries
+    C->>C: Decode matching UUID if found
+```
+
 The privacy guarantees are:
 
 1. Server learns nothing about:
@@ -92,7 +130,7 @@ This enhances the privacy and confidentiality of the client's data and prevents 
 
 ### References
 
-Refer to [How Signal uses ORAMs](https://signal.org/blog/building-faster-oram/) to understand the technology more practically!
+I was inspired by [How Signal uses ORAMs](https://signal.org/blog/building-faster-oram/)!
 
 The best blog to learn ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! The idea of Zero Knowledge Set Membership comes from [this](https://eprint.iacr.org/2021/1672.pdf) paper paired with the simple Path ORAM coming from [this](https://eprint.iacr.org/2013/280.pdf) paper.
 
