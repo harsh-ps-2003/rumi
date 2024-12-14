@@ -18,9 +18,9 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use tracing::{debug, trace};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
-use tracing::{debug, trace};
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
@@ -100,7 +100,8 @@ impl Server {
         let mut rng = rng;
 
         // Get all identifiers that match the prefix
-        let matching_ids: Vec<u64> = self.oram
+        let matching_ids: Vec<u64> = self
+            .oram
             .get_all_identifiers()
             .into_iter()
             .filter(|&id| {
@@ -154,7 +155,7 @@ impl Server {
     // get public key set from ORAM
     pub fn get_public_set(&self) -> Vec<u64> {
         let mut public_set = self.oram.get_all_identifiers();
-        public_set.sort(); 
+        public_set.sort();
         public_set
     }
 
@@ -184,17 +185,24 @@ impl Client {
         let hashed_identifier = sha256(identifier);
         let client_blinded_identifier_point = hash_to_curve(identifier) * self.client_secret;
         let zksm_proof = generate_zksm_proof(identifier, public_set);
-        
+
         // Move debug prints to trace level
         trace!("Generated ZKSM proof: {:?}", zksm_proof);
-        trace!("Client blinded point: {:?}", client_blinded_identifier_point.to_affine().to_encoded_point(true));
+        trace!(
+            "Client blinded point: {:?}",
+            client_blinded_identifier_point
+                .to_affine()
+                .to_encoded_point(true)
+        );
 
-        let prefix = prefix(&hashed_identifier); 
+        let prefix = prefix(&hashed_identifier);
         trace!("Generated prefix: {:?}", prefix);
 
         (
             prefix,
-            client_blinded_identifier_point.to_affine().to_encoded_point(true),
+            client_blinded_identifier_point
+                .to_affine()
+                .to_encoded_point(true),
             zksm_proof,
         )
     }
@@ -252,12 +260,16 @@ fn encode_to_point(user_id: &Uuid) -> AffinePoint {
         encoded.extend_from_slice(&hash[0..32]); // Take first 32 bytes for X coordinate
 
         // Try to create a point from the encoded bytes
-        if let Some(point) = AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(&encoded).unwrap_or_default()).into() {
+        if let Some(point) =
+            AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(&encoded).unwrap_or_default())
+                .into()
+        {
             return point;
         }
 
         counter += 1;
-        if counter > 1000 { // Add a reasonable limit to prevent infinite loops
+        if counter > 1000 {
+            // Add a reasonable limit to prevent infinite loops
             // If we can't find a valid point after 1000 attempts, start with a different initial hash
             hasher = Sha256::new();
             hasher.update(&counter.to_le_bytes());
@@ -300,7 +312,7 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     let h_x = hash_to_curve(identifier);
     let commitment = (h_x * r).to_affine();
     let commitment_encoded = commitment.to_encoded_point(true);
-    
+
     trace!("Client side random r: {:?}", r);
     trace!("Server commitment: {:?}", commitment_encoded);
 
@@ -318,20 +330,20 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     trace!("Generated response: {:?}", response);
 
     trace!("Generating ZKSM proof for identifier {}", identifier);
-    
+
     let proof = ZKSMProof {
         commitment: commitment_encoded,
         challenge,
         response,
     };
-    
+
     trace!("Generated proof: {:?}", proof);
     proof
 }
 
 fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     debug!("Verifying ZKSM proof");
-    
+
     let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
     let challenge = hash_to_scalar(
         &[
@@ -351,9 +363,14 @@ fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
         let h_x = hash_to_curve(x);
         let lhs = ProjectivePoint::from(commitment_point) + h_x * proof.challenge;
         let rhs = h_x * proof.response;
-        
-        trace!("Verification for x = {}: LHS = {:?}, RHS = {:?}", x, lhs, rhs);
-        
+
+        trace!(
+            "Verification for x = {}: LHS = {:?}, RHS = {:?}",
+            x,
+            lhs,
+            rhs
+        );
+
         let equal = lhs.to_affine() == rhs.to_affine();
         if equal {
             debug!("Found matching element: {}", x);
@@ -376,7 +393,5 @@ fn hash_to_scalar(data: &[u8]) -> Scalar {
 fn serialize_public_set(public_set: &[u64]) -> Vec<u8> {
     let mut sorted = public_set.to_vec();
     sorted.sort();
-    sorted.iter()
-        .flat_map(|&x| x.to_le_bytes())
-        .collect()
+    sorted.iter().flat_map(|&x| x.to_le_bytes()).collect()
 }

@@ -1,14 +1,14 @@
+use crate::rumi_proto::{GetPublicSetRequest, GetPublicSetResponse};
+use console::style;
+use p256::EncodedPoint;
 use rumi::Server;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
-use uuid::Uuid;
-use serde_json;
-use crate::rumi_proto::{GetPublicSetRequest, GetPublicSetResponse};
-use p256::EncodedPoint;
-use tracing::{info, warn, debug};
-use console::style;
+use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
+use uuid::Uuid;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -28,14 +28,17 @@ impl DiscoveryService {
     pub fn new() -> Self {
         let mut rng = rand::thread_rng();
         let mut users = HashMap::new();
-        
+
         for i in 0..100 {
             users.insert(1_000_000_000 + i, Uuid::new_v4());
         }
 
         let server = Server::new(&mut rng, &users);
-        debug!("Server initialized with identifiers: {:?}", server.get_public_set());
-        
+        debug!(
+            "Server initialized with identifiers: {:?}",
+            server.get_public_set()
+        );
+
         Self {
             server: Arc::new(Mutex::new(server)),
         }
@@ -48,15 +51,15 @@ impl Discovery for DiscoveryService {
         &self,
         _request: Request<GetPublicSetRequest>,
     ) -> Result<Response<GetPublicSetResponse>, Status> {
-        let server = self.server.lock().map_err(|_| Status::internal("Server lock poisoned"))?;
+        let server = self
+            .server
+            .lock()
+            .map_err(|_| Status::internal("Server lock poisoned"))?;
         let identifiers = server.get_public_set();
         Ok(Response::new(GetPublicSetResponse { identifiers }))
     }
 
-    async fn find(
-        &self,
-        request: Request<FindRequest>,
-    ) -> Result<Response<FindResponse>, Status> {
+    async fn find(&self, request: Request<FindRequest>) -> Result<Response<FindResponse>, Status> {
         let request_inner = request.into_inner();
         let hash_prefix = request_inner.hash_prefix;
         let client_blinded_identifier = request_inner.blinded_identifier;
@@ -65,20 +68,24 @@ impl Discovery for DiscoveryService {
         let prefix: [u8; 8] = hash_prefix
             .try_into()
             .map_err(|_| Status::invalid_argument("Invalid prefix length"))?;
-            
+
         let mut rng = rand::thread_rng();
-        
+
         // Get mutable lock once and keep it for the duration
-        let mut server = self.server.lock().map_err(|_| Status::internal("Server lock poisoned"))?;
-        
+        let mut server = self
+            .server
+            .lock()
+            .map_err(|_| Status::internal("Server lock poisoned"))?;
+
         let client_blinded_point = p256::EncodedPoint::from_bytes(&client_blinded_identifier)
             .map_err(|_| Status::invalid_argument("Invalid blinded identifier"))?;
-        
+
         let double_blinded_point = server.blind_identifier(&client_blinded_point);
 
         match server.find_bucket(
             prefix,
-            &serde_json::from_str(&zksm_proof).map_err(|_| Status::invalid_argument("Invalid ZKSM proof"))?,
+            &serde_json::from_str(&zksm_proof)
+                .map_err(|_| Status::invalid_argument("Invalid ZKSM proof"))?,
             &mut rng,
         ) {
             Some(bucket) => {
@@ -104,7 +111,7 @@ impl Discovery for DiscoveryService {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let service = DiscoveryService::new();
-    
+
     fmt()
         .with_env_filter("info")
         .with_target(false)
@@ -115,8 +122,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("{}", style("RUMI Discovery Server").green().bold());
     info!("Listening on {}", style(addr).cyan());
-    info!("Initialized with {} identifiers", style(service.server.lock().unwrap().get_public_set().len()).yellow());
-    debug!("Public set: {:?}", service.server.lock().unwrap().get_public_set());
+    info!(
+        "Initialized with {} identifiers",
+        style(service.server.lock().unwrap().get_public_set().len()).yellow()
+    );
+    debug!(
+        "Public set: {:?}",
+        service.server.lock().unwrap().get_public_set()
+    );
 
     TonicServer::builder()
         .add_service(DiscoveryServer::new(service))

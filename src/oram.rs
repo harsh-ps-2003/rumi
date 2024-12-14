@@ -5,8 +5,8 @@ A simple Path ORAM implementation
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use tracing::{debug, trace};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // The depth of the ORAM tree determining the total nodes
 const ORAM_DEPTH: usize = 20;
@@ -65,17 +65,19 @@ impl PathORAM {
             .position_map
             .entry(id)
             .or_insert_with(|| rng.next_u32() as usize % (1 << ORAM_DEPTH));
-        
+
         // Generate new path for next access
         let new_path = rng.next_u32() as usize % (1 << ORAM_DEPTH);
-        
+
         // Read path into stash
         let blocks = self.read_path(path);
         self.stash.extend(blocks);
 
         // Find the target block in stash
         let result = match op {
-            Operation::Read => self.stash.iter()
+            Operation::Read => self
+                .stash
+                .iter()
                 .find(|b| b.id == id)
                 .map(|b| b.data.clone()),
             Operation::Write => {
@@ -201,14 +203,17 @@ impl PathORAM {
         if self.position_map.contains_key(&id) {
             return true;
         }
-        
+
         // Also check stash and tree for the block
         if self.stash.iter().any(|block| block.id == id) {
             return true;
         }
 
         for bucket in &self.tree {
-            if bucket.iter().any(|block| block.as_ref().map_or(false, |b| b.id == id)) {
+            if bucket
+                .iter()
+                .any(|block| block.as_ref().map_or(false, |b| b.id == id))
+            {
                 return true;
             }
         }

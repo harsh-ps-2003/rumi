@@ -1,4 +1,5 @@
 use clap::Parser;
+use console::style;
 use rumi::Client;
 use rumi_proto::discovery_client::DiscoveryClient;
 use rumi_proto::{FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse};
@@ -6,8 +7,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::vec;
 use tonic::Response;
-use tracing::{info, warn, debug, trace};
-use console::style;
+use tracing::{debug, info, trace, warn};
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -40,18 +40,21 @@ async fn lookup_identifier(
         .identifiers;
 
     trace!("Retrieved public set with {} identifiers", public_set.len());
-    
+
     if !public_set.contains(&identifier) {
-        info!("{} Identifier {} not found in the system", 
-            style("✗").red().bold(), 
-            style(identifier).cyan());
+        info!(
+            "{} Identifier {} not found in the system",
+            style("✗").red().bold(),
+            style(identifier).cyan()
+        );
         return Ok(());
     }
 
     info!("Looking up identifier {}", style(identifier).cyan());
-    
+
     // Generate blinded request
-    let (prefix, blinded_point, zksm_proof) = rumi_client.request_identifier(identifier, &public_set);
+    let (prefix, blinded_point, zksm_proof) =
+        rumi_client.request_identifier(identifier, &public_set);
 
     // Create and send request
     let request = tonic::Request::new(FindRequest {
@@ -63,10 +66,11 @@ async fn lookup_identifier(
     match client.find(request).await {
         Ok(response) => {
             let response = response.into_inner();
-            
+
             // Convert double_blinded_identifier to EncodedPoint
-            let double_blinded_point = p256::EncodedPoint::from_bytes(&response.double_blinded_identifier)
-                .map_err(|_| "Invalid double blinded identifier")?;
+            let double_blinded_point =
+                p256::EncodedPoint::from_bytes(&response.double_blinded_identifier)
+                    .map_err(|_| "Invalid double blinded identifier")?;
 
             // Convert response entries to HashMap
             let bucket: HashMap<_, _> = response
@@ -80,21 +84,32 @@ async fn lookup_identifier(
                 })
                 .collect();
 
-            if let Some(user_id_point) = rumi_client.find_user_id(&double_blinded_point, &bucket, identifier) {
-                info!("{} Found matching UUID for identifier {}", 
-                    style("✓").green().bold(), 
-                    style(identifier).cyan());
-                info!("UUID: {}", style(hex::encode(&user_id_point.as_bytes()[1..17])).yellow());
+            if let Some(user_id_point) =
+                rumi_client.find_user_id(&double_blinded_point, &bucket, identifier)
+            {
+                info!(
+                    "{} Found matching UUID for identifier {}",
+                    style("✓").green().bold(),
+                    style(identifier).cyan()
+                );
+                info!(
+                    "UUID: {}",
+                    style(hex::encode(&user_id_point.as_bytes()[1..17])).yellow()
+                );
             } else {
-                info!("{} No matching record found for identifier {}", 
-                    style("✗").red().bold(), 
-                    style(identifier).cyan());
+                info!(
+                    "{} No matching record found for identifier {}",
+                    style("✗").red().bold(),
+                    style(identifier).cyan()
+                );
             }
         }
         Err(status) => {
-            warn!("{} Lookup failed: {}", 
-                style("✗").red().bold(), 
-                style(status).red());
+            warn!(
+                "{} Lookup failed: {}",
+                style("✗").red().bold(),
+                style(status).red()
+            );
         }
     }
 
