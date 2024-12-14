@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
+use tracing::{debug, trace};
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
@@ -183,18 +184,17 @@ impl Client {
         let hashed_identifier = sha256(identifier);
         let client_blinded_identifier_point = hash_to_curve(identifier) * self.client_secret;
         let zksm_proof = generate_zksm_proof(identifier, public_set);
-        println!("Client generated ZKSM proof: {:?}", zksm_proof);
+        
+        // Move debug prints to trace level
+        trace!("Generated ZKSM proof: {:?}", zksm_proof);
+        trace!("Client blinded point: {:?}", client_blinded_identifier_point.to_affine().to_encoded_point(true));
 
         let prefix = prefix(&hashed_identifier); 
-        let encoded_point = client_blinded_identifier_point
-                        .to_affine()
-                        .to_encoded_point(true);
+        trace!("Generated prefix: {:?}", prefix);
 
-        println!("Client blinded point: {:?}", encoded_point);
-        println!("Client prefix: {:?}", prefix);
         (
             prefix,
-            encoded_point,
+            client_blinded_identifier_point.to_affine().to_encoded_point(true),
             zksm_proof,
         )
     }
@@ -300,17 +300,11 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     let h_x = hash_to_curve(identifier);
     let commitment = (h_x * r).to_affine();
     let commitment_encoded = commitment.to_encoded_point(true);
-    println!("Client side:");
-    println!("Random r: {:?}", r);
+    
+    trace!("Client side random r: {:?}", r);
+    trace!("Server commitment: {:?}", commitment_encoded);
 
-    println!("server Affine commitment: {:?}", commitment);
-    println!("server Encoded commitment: {:?}", commitment_encoded);
-
-    // Use sorted public set for challenge
-    let mut sorted_set = public_set.to_vec();
-    sorted_set.sort();
-
-    // Challenge should be derived from the commitment and public parameters
+    // Challenge computation
     let challenge = hash_to_scalar(
         &[
             commitment_encoded.as_bytes()[1..].to_vec(),
@@ -319,36 +313,26 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
         .concat(),
     );
 
-    println!("Challenge input bytes: {:?}", 
-        &[
-            commitment_encoded.as_bytes()[1..].to_vec(),
-            serialize_public_set(public_set),
-        ].concat()
-    );
-
-    println!("Generated challenge: {:?}", challenge);
+    trace!("Generated challenge: {:?}", challenge);
     let response = r + challenge;
-    println!("Generated response: {:?}", response);
+    trace!("Generated response: {:?}", response);
 
-    ZKSMProof {
+    trace!("Generating ZKSM proof for identifier {}", identifier);
+    
+    let proof = ZKSMProof {
         commitment: commitment_encoded,
         challenge,
         response,
-    }
+    };
+    
+    trace!("Generated proof: {:?}", proof);
+    proof
 }
 
 fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
-    println!("Verifying ZKSM proof: {:?}", proof);
-
-    // Sort public set for consistent challenge computation
-    let mut sorted_set = public_set.to_vec();
-    sorted_set.sort();
-
-    println!("Public set size: {}", public_set.len());
-    println!("Public set range: {} to {}", public_set[0], public_set[public_set.len()-1]);
-
+    debug!("Verifying ZKSM proof");
+    
     let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
-    println!("commitment point: {:?}", commitment_point);
     let challenge = hash_to_scalar(
         &[
             proof.commitment.as_bytes()[1..].to_vec(),
@@ -357,12 +341,8 @@ fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
         .concat(),
     );
 
-    println!("Computed challenge: {:?}", challenge);
-    println!("Proof challenge: {:?}", proof.challenge);
-
-    // Check if challenges match
     if challenge != proof.challenge {
-        println!("Challenge mismatch!");
+        debug!("Challenge mismatch in ZKSM proof");
         return false;
     }
 
@@ -371,14 +351,12 @@ fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
         let h_x = hash_to_curve(x);
         let lhs = ProjectivePoint::from(commitment_point) + h_x * proof.challenge;
         let rhs = h_x * proof.response;
-        println!("Verifying for x = {}:", x);
-        println!("Verification equation:");
-        println!("LHS (commitment + h(x)*challenge): {:?}", lhs);
-        println!("RHS (h(x)*response): {:?}", rhs);
+        
+        trace!("Verification for x = {}: LHS = {:?}, RHS = {:?}", x, lhs, rhs);
+        
         let equal = lhs.to_affine() == rhs.to_affine();
-        println!("valid {}", equal);
         if equal {
-            println!("Found matching element: {}", x);
+            debug!("Found matching element: {}", x);
         }
         equal
     });

@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::vec;
 use tonic::Response;
+use tracing::{info, warn, debug, trace};
+use console::style;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -31,20 +33,23 @@ async fn lookup_identifier(
     rumi_client: &Client,
     identifier: u64,
 ) -> Result<(), Box<dyn Error>> {
-    // First get the public set from server
     let public_set = client
         .get_public_set(GetPublicSetRequest {})
         .await?
         .into_inner()
         .identifiers;
 
-    println!("Retrieved public set: {:?}", public_set);
+    trace!("Retrieved public set with {} identifiers", public_set.len());
     
     if !public_set.contains(&identifier) {
-        println!("❌ Identifier {} not in public set", identifier);
+        info!("{} Identifier {} not found in the system", 
+            style("✗").red().bold(), 
+            style(identifier).cyan());
         return Ok(());
     }
 
+    info!("Looking up identifier {}", style(identifier).cyan());
+    
     // Generate blinded request
     let (prefix, blinded_point, zksm_proof) = rumi_client.request_identifier(identifier, &public_set);
 
@@ -76,18 +81,20 @@ async fn lookup_identifier(
                 .collect();
 
             if let Some(user_id_point) = rumi_client.find_user_id(&double_blinded_point, &bucket, identifier) {
-                println!("✅ Found matching UUID for identifier {}", identifier);
-                println!("UUID Point: {}", hex::encode(user_id_point.as_bytes()));
+                info!("{} Found matching UUID for identifier {}", 
+                    style("✓").green().bold(), 
+                    style(identifier).cyan());
+                info!("UUID: {}", style(hex::encode(&user_id_point.as_bytes()[1..17])).yellow());
             } else {
-                println!("❌ No match found for identifier {}", identifier);
-                println!("Debug info:");
-                println!("Bucket size: {}", bucket.len());
-                println!("Double blinded point: {:?}", double_blinded_point);
-                println!("Bucket contents: {:?}", bucket.keys().collect::<Vec<_>>());
+                info!("{} No matching record found for identifier {}", 
+                    style("✗").red().bold(), 
+                    style(identifier).cyan());
             }
         }
         Err(status) => {
-            println!("❌ Error: {}", status);
+            warn!("{} Lookup failed: {}", 
+                style("✗").red().bold(), 
+                style(status).red());
         }
     }
 
@@ -96,6 +103,14 @@ async fn lookup_identifier(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Initialize logging with info level by default
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_line_number(false)
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {

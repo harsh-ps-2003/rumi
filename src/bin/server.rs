@@ -6,6 +6,9 @@ use uuid::Uuid;
 use serde_json;
 use crate::rumi_proto::{GetPublicSetRequest, GetPublicSetResponse};
 use p256::EncodedPoint;
+use tracing::{info, warn, debug};
+use console::style;
+use tracing_subscriber::fmt;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -23,17 +26,15 @@ pub struct DiscoveryService {
 
 impl DiscoveryService {
     pub fn new() -> Self {
-        // Initialize with some demo data
         let mut rng = rand::thread_rng();
         let mut users = HashMap::new();
         
-        // Add some demo phone numbers and UUIDs
         for i in 0..100 {
             users.insert(1_000_000_000 + i, Uuid::new_v4());
         }
 
         let server = Server::new(&mut rng, &users);
-        println!("Server initialized with identifiers: {:?}", server.get_public_set());
+        debug!("Server initialized with identifiers: {:?}", server.get_public_set());
         
         Self {
             server: Arc::new(Mutex::new(server)),
@@ -104,7 +105,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let service = DiscoveryService::new();
     
-    println!("RUMI Discovery Server listening on {}", addr);
+    fmt()
+        .with_env_filter("info")
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+
+    info!("{}", style("RUMI Discovery Server").green().bold());
+    info!("Listening on {}", style(addr).cyan());
+    info!("Initialized with {} identifiers", style(service.server.lock().unwrap().get_public_set().len()).yellow());
+    debug!("Public set: {:?}", service.server.lock().unwrap().get_public_set());
 
     TonicServer::builder()
         .add_service(DiscoveryServer::new(service))
