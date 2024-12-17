@@ -139,11 +139,26 @@ The best blog to learn ECC that I could find out was [this](https://andrea.corbe
 1. Add support for Private Information Retrieval (PIR) to further reduce server knowledge. Think about IT-PIR (if distributed servers are involved), cPIR (using Homomorphic encryptions but huge computational overhead). Try tinkering with Hybrid PIR-ORAM scheme referenced in [this](https://arxiv.org/pdf/1904.05452) paper. Use of PIR has significant performance tradeoffs!
 2. Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
 3. Implement a secure update mechanism using ZKPs.
-4. Tackle side channel attacks!
+4. Goals:
+   - Write: <15μs (17% improvement)
+   - Read:  <50μs (50% improvement)
+5. Tackle side channel attacks!
 
 ## Performance Analysis 
 
 Run `sudo -E cargo flamegraph --root --bin server` and then lookup any identifier. Then close the server to get the flamegraph in the root of the project. 
+
+The benchmark results were :
+
+oram_write: [17.631 µs 17.893 µs 18.167 µs]
+           |_min___|_avg___|_max___|
+
+oram_read:  [100.96 µs 101.34 µs 101.73 µs]
+           |__min___|__avg___|__max___|
+
+The read is significantly slower than writes :(
+
+Run `cargo bench` for detailed benchmarks.
 
 ## Disclaimer
 

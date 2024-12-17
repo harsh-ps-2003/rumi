@@ -14,7 +14,7 @@ const ORAM_DEPTH: usize = 20;
 const BUCKET_SIZE: usize = 4;
 
 // Read/Write ORAM operations
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operation {
     Read,
     Write,
@@ -219,5 +219,26 @@ impl PathORAM {
         }
 
         false
+    }
+
+    // Helper methods for benchmarking
+    pub fn get_tree_height(&self) -> usize {
+        ORAM_DEPTH
+    }
+
+    pub fn get_position_map_size(&self) -> usize {
+        self.position_map.len()
+    }
+
+    pub fn get_stash_size(&self) -> usize {
+        self.stash.len()
+    }
+
+    pub fn get_total_blocks(&self) -> usize {
+        let mut total = 0;
+        for bucket in &self.tree {
+            total += bucket.iter().filter(|block| block.is_some()).count();
+        }
+        total + self.stash.len()
     }
 }

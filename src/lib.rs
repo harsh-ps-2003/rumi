@@ -1,4 +1,4 @@
-mod oram;
+pub mod oram;
 
 use crate::oram::{Operation, PathORAM};
 use p256::{
