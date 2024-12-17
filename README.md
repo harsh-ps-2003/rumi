@@ -141,6 +141,10 @@ The best blog to learn ECC that I could find out was [this](https://andrea.corbe
 3. Implement a secure update mechanism using ZKPs.
 4. Tackle side channel attacks!
 
+## Performance Analysis 
+
+Run `sudo -E cargo flamegraph --root --bin server` and then lookup any identifier. Then close the server to get the flamegraph in the root of the project. 
+
 ## Disclaimer
 
 This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur. 
