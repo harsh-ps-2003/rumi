@@ -14,7 +14,7 @@ name = "client"
 path = "src/bin/client.rs"
 
 [dependencies]
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.0", features = ["full", "tracing", "rt-multi-thread"] }
 tonic = "0.12.3"
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -30,9 +30,11 @@ prost = "0.13.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 console = "0.15"
+console-subscriber = "0.4.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+tokio-console = "0.1.13"
 
 [build-dependencies]
 tonic-build = "0.12.3"
@@ -43,3 +45,6 @@ debug = true
 [[bench]]
 name = "oram_benchmarks"
 harness = false
+
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

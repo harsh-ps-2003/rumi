@@ -144,7 +144,7 @@ The best blog to learn ECC that I could find out was [this](https://andrea.corbe
    - Read:  <50μs (50% improvement)
 5. Tackle side channel attacks!
 
-## Performance Analysis 
+## Analysis 
 
 Run `sudo -E cargo flamegraph --root --bin server` and then lookup any identifier. Then close the server to get the flamegraph in the root of the project. 
 
@@ -159,6 +159,10 @@ oram_read:  [100.96 µs 101.34 µs 101.73 µs]
 The read is significantly slower than writes :(
 
 Run `cargo bench` for detailed benchmarks.
+
+Run `RUST_LOG=debug cargo run --bin server` and `RUST_LOG=debug cargo run --bin client -- lookup 1000000001` to run the debug traces.
+
+Also, `tokio-console` can be used for more performance monitoring.
 
 ## Disclaimer
 

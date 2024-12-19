@@ -6,8 +6,8 @@ use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
-use tracing::{debug, info, warn};
-use tracing_subscriber::fmt;
+use tracing::{debug, info, warn, Level};
+use tracing_subscriber::{fmt, prelude::*};
 use uuid::Uuid;
 
 pub mod rumi_proto {
@@ -107,17 +107,26 @@ impl Discovery for DiscoveryService {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let service = DiscoveryService::new();
 
-    fmt()
-        .with_env_filter("info")
-        .with_target(false)
-        .with_thread_ids(true)
-        .with_file(true)
-        .with_line_number(true)
+    // Set up single combined subscriber
+    let console_layer = console_subscriber::ConsoleLayer::builder()
+        .with_default_env()
+        .spawn();
+
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(
+            fmt::layer()
+                .with_target(false)
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_level(true),
+        )
         .init();
 
     info!("{}", style("RUMI Discovery Server").green().bold());
@@ -126,6 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Initialized with {} identifiers",
         style(service.server.lock().unwrap().get_public_set().len()).yellow()
     );
+    info!("Tokio Console available on http://127.0.0.1:6669");
     debug!(
         "Public set: {:?}",
         service.server.lock().unwrap().get_public_set()

@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::vec;
 use tonic::Response;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace, warn, Level};
+use tracing_subscriber::{fmt, prelude::*};
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -116,15 +117,26 @@ async fn lookup_identifier(
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Initialize logging with info level by default
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_line_number(false)
+    // Set up single combined subscriber
+    let console_layer = console_subscriber::ConsoleLayer::builder()
+        .with_default_env()
+        .spawn();
+
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(
+            fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_line_number(false)
+                .with_level(true),
+        )
         .init();
+
+    info!("RUMI Client starting up");
+    info!("Tokio Console available on http://127.0.0.1:6669");
 
     let cli = Cli::parse();
 
