@@ -128,6 +128,121 @@ The benefit of this approach is that the server only learns about the associatio
 
 This enhances the privacy and confidentiality of the client's data and prevents the server from having unrestricted access to sensitive information. The client can only refer to an identifier when they know it, preventing offline guessing attacks. While the server retains some information (N-bit prefixes and blinded points), it cannot directly link this data to the original identifiers without the client's secret key.
 
+## Architecture
+
+RUMI consists of two main stacks:
+
+### 1. Application Stack (`/src`)
+
+The core application is built with Rust and consists of:
+
+- **Server** (`src/bin/server.rs`): 
+  - gRPC server handling client requests
+  - Implements Path ORAM for secure data access
+  - Integrates with Prometheus for metrics
+  - Features:
+    - Zero-Knowledge Set Membership proofs
+    - Elliptic Curve Cryptography (P-256)
+    - Blinded identifier handling
+
+- **Client** (`src/bin/client.rs`):
+  - Command-line interface for interacting with server
+  - Handles identifier blinding and proof generation
+  - Supports lookup operations
+
+- **Core Library** (`src/lib.rs`, `src/oram.rs`):
+  - Path ORAM implementation
+  - Cryptographic primitives
+  - Protocol implementation
+
+### 2. Monitoring Stack (`/monitoring`)
+
+The monitoring infrastructure uses Docker Compose and includes:
+
+- **Prometheus** (`monitoring/prometheus/`):
+  - Metrics collection and storage
+  - Configuration in `prometheus.yml`
+  - Scrapes metrics from Pushgateway
+  - Default retention: 15 days
+  - Port: 9090
+
+- **Pushgateway**:
+  - Accepts metrics from the RUMI server
+  - Bridges non-persistent metrics to Prometheus
+  - Port: 9091
+
+- **Grafana** (`monitoring/grafana/`):
+  - Metrics visualization
+  - Pre-configured dashboards
+  - Port: 3001 (admin/admin)
+
+Key metrics collected:
+- Request counters by endpoint
+- Request duration histograms
+- Memory usage
+- ORAM operation timings
+
+## Deployment
+
+### Application Stack
+
+1. Build and start the server:
+```bash
+docker compose up -d server
+```
+
+2. Run client commands:
+```bash
+docker compose run client lookup <identifier>
+```
+
+Server endpoints:
+- gRPC: localhost:50051
+- Metrics: localhost:9091/metrics
+
+### Monitoring Stack
+
+1. Start the monitoring services:
+```bash
+cd monitoring
+docker compose up -d
+```
+
+2. Access monitoring interfaces:
+- Prometheus: http://localhost:9090
+- Pushgateway: http://localhost:9091
+- Grafana: http://localhost:3001 (admin/admin)
+
+### Docker Network Architecture
+
+The setup uses two Docker networks:
+- `rumi-net`: Internal network for server-client communication
+- `monitoring_monitoring`: Shared network with monitoring stack
+
+### Building from Source
+
+```bash
+# Build all components
+docker compose build
+
+# Build specific components
+docker compose build server
+docker compose build client
+
+# View logs
+docker compose logs -f server
+```
+
+### Development Commands
+
+```bash
+# Run server with debug logging
+RUST_LOG=debug cargo run --bin server
+
+# Run client
+cargo run --bin client -- lookup 1000000001
+```
+
 ### References
 
 I was inspired by [How Signal uses ORAMs](https://signal.org/blog/building-faster-oram/)!
@@ -169,3 +284,4 @@ Also, `tokio-console` can be used for more performance monitoring.
 This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur. 
 
 Not designed to be used in production!
+
