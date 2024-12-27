@@ -4,14 +4,22 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Harsh Pratap Singh <harshpratapsingh821@gmail.com>"]
 description = "A privacy-preserving discovery service design for mapping distinct identifiers to IDs without revealing any information to the server!"
+license = "MIT"
+repository = "https://github.com/harsh-ps-2003/rumi"
+documentation = "https://docs.rs/rumi"
+readme = "README.md"
+keywords = ["privacy", "cryptography", "oram", "discovery-service", "zero-knowledge"]
+categories = ["cryptography"]
 
 [[bin]]
 name = "server"
 path = "src/bin/server.rs"
+doc = false  # Don't include binaries in docs
 
 [[bin]]
 name = "client"
 path = "src/bin/client.rs"
+doc = false  # Don't include binaries in docs
 
 [dependencies]
 tokio = { version = "1.0", features = ["full", "tracing", "rt-multi-thread"] }

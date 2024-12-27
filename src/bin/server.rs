@@ -1,22 +1,21 @@
 use crate::rumi_proto::{GetPublicSetRequest, GetPublicSetResponse};
 use console::style;
+use lazy_static::lazy_static;
 use p256::EncodedPoint;
+use prometheus::{
+    core::Collector, register_gauge_vec, register_histogram_vec, register_int_counter_vec, Encoder,
+    GaugeVec, HistogramVec, IntCounterVec, Registry, TextEncoder,
+};
+use reqwest;
 use rumi::Server;
 use serde_json;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::{debug, info, warn, Level};
 use tracing_subscriber::{fmt, prelude::*};
 use uuid::Uuid;
-use lazy_static::lazy_static;
-use prometheus::{
-    register_histogram_vec, register_int_counter_vec, register_gauge_vec,
-    HistogramVec, IntCounterVec, GaugeVec, Registry,
-    core::Collector, Encoder, TextEncoder
-};
-use std::net::SocketAddr;
-use reqwest;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -30,25 +29,21 @@ use rumi_proto::{
 // Define metrics
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
-    
     static ref REQUEST_COUNTER: IntCounterVec = register_int_counter_vec!(
         "rumi_requests_total",
         "Total number of requests received",
         &["endpoint"]
-    ).unwrap();
-
+    )
+    .unwrap();
     static ref REQUEST_DURATION: HistogramVec = register_histogram_vec!(
         "rumi_request_duration_seconds",
         "Request duration in seconds",
         &["endpoint"],
         vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
-    ).unwrap();
-
-    static ref MEMORY_GAUGE: GaugeVec = register_gauge_vec!(
-        "rumi_memory_bytes",
-        "Memory usage in bytes",
-        &["type"]
-    ).unwrap();
+    )
+    .unwrap();
+    static ref MEMORY_GAUGE: GaugeVec =
+        register_gauge_vec!("rumi_memory_bytes", "Memory usage in bytes", &["type"]).unwrap();
 }
 
 // Metrics handler function
@@ -110,9 +105,7 @@ impl Discovery for DiscoveryService {
     }
 
     async fn find(&self, request: Request<FindRequest>) -> Result<Response<FindResponse>, Status> {
-        let timer = REQUEST_DURATION
-            .with_label_values(&["find"])
-            .start_timer();
+        let timer = REQUEST_DURATION.with_label_values(&["find"]).start_timer();
         REQUEST_COUNTER.with_label_values(&["find"]).inc();
 
         let result = {
@@ -133,8 +126,9 @@ impl Discovery for DiscoveryService {
                 .lock()
                 .map_err(|_| Status::internal("Server lock poisoned"))?;
 
-            let client_blinded_point = p256::EncodedPoint::from_bytes(&client_blinded_identifier)
-                .map_err(|_| Status::invalid_argument("Invalid blinded identifier"))?;
+            let client_blinded_point =
+                p256::EncodedPoint::from_bytes(&client_blinded_identifier)
+                    .map_err(|_| Status::invalid_argument("Invalid blinded identifier"))?;
 
             let double_blinded_point = server.blind_identifier(&client_blinded_point);
 
@@ -173,8 +167,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = DiscoveryService::new();
 
     // Register metrics
-    REGISTRY.register(Box::new(REQUEST_COUNTER.clone())).unwrap();
-    REGISTRY.register(Box::new(REQUEST_DURATION.clone())).unwrap();
+    REGISTRY
+        .register(Box::new(REQUEST_COUNTER.clone()))
+        .unwrap();
+    REGISTRY
+        .register(Box::new(REQUEST_DURATION.clone()))
+        .unwrap();
     REGISTRY.register(Box::new(MEMORY_GAUGE.clone())).unwrap();
 
     // Start metrics pushing in background
@@ -183,11 +181,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             // Generate some test metrics
             REQUEST_COUNTER.with_label_values(&["test"]).inc();
-            MEMORY_GAUGE.with_label_values(&["heap"]).set(rand::random::<f64>() * 1000.0);
-            
+            MEMORY_GAUGE
+                .with_label_values(&["heap"])
+                .set(rand::random::<f64>() * 1000.0);
+
             let metrics = get_metrics();
             match client
-                .post("http://localhost:9091/metrics/job/rumi")  // Simplified endpoint
+                .post("http://localhost:9091/metrics/job/rumi") // Simplified endpoint
                 .header("Content-Type", "text/plain")
                 .body(metrics)
                 .send()
@@ -195,7 +195,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(response) => {
                     if !response.status().is_success() {
-                        warn!("Failed to push metrics: HTTP {} - Body: {}", 
+                        warn!(
+                            "Failed to push metrics: HTTP {} - Body: {}",
                             response.status(),
                             response.text().await.unwrap_or_default()
                         );
@@ -236,7 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!("Tokio Console available on http://127.0.0.1:6669");
     info!("Metrics being pushed to Prometheus");
-    
+
     debug!(
         "Public set: {:?}",
         service.server.lock().unwrap().get_public_set()
