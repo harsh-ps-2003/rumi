@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   DOCKER_BUILDKIT: 1
+  RUST_VERSION: 1.75.0
 
 jobs:
   build:
@@ -26,7 +27,7 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
         profile: minimal
-        toolchain: stable
+        toolchain: ${{ env.RUST_VERSION }}
         override: true
 
     - name: Cache dependencies
@@ -66,6 +67,8 @@ jobs:
         tags: rumi-server:latest
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+        build-args: |
+          RUST_VERSION=${{ env.RUST_VERSION }}
 
     - name: Build Client Docker image
       uses: docker/build-push-action@v4
@@ -77,8 +80,10 @@ jobs:
         tags: rumi-client:latest
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+        build-args: |
+          RUST_VERSION=${{ env.RUST_VERSION }}
 
     - name: Move cache
       run: |
         rm -rf /tmp/.buildx-cache
-        mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true

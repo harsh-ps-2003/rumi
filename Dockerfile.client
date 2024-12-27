@@ -1,11 +1,11 @@
-FROM rust:1.74-slim as builder
+ARG RUST_VERSION=1.75.0
+FROM rust:${RUST_VERSION}-slim-bookworm as builder
 
 WORKDIR /usr/src/rumi
 COPY . .
 RUN cargo build --release --bin client
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl-dev && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/src/rumi/target/release/client /usr/local/bin/client
 
+COPY --from=builder /usr/src/rumi/target/release/client /usr/local/bin/
 ENTRYPOINT ["client"] 
