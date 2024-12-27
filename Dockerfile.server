@@ -2,10 +2,25 @@ ARG RUST_VERSION=1.75.0
 FROM rust:${RUST_VERSION}-slim-bookworm as builder
 
 WORKDIR /usr/src/rumi
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN cargo build --release --bin server
 
 FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/src/rumi/target/release/server /usr/local/bin/
 CMD ["server"] 
