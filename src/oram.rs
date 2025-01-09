@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, trace};
 use zeroize::{Zeroize, ZeroizeOnDrop};
+use tracing_attributes::instrument;
 
 // The depth of the ORAM tree determining the total nodes
 const ORAM_DEPTH: usize = 20;
@@ -52,6 +53,7 @@ impl PathORAM {
     }
 
     // Main access function for reading or writing data
+    #[instrument(skip(self, rng), fields(id = %id, operation = ?op), ret)]
     pub fn access(
         &mut self,
         op: Operation,
@@ -59,8 +61,6 @@ impl PathORAM {
         data: Option<Vec<u8>>,
         rng: &mut (impl CryptoRng + RngCore),
     ) -> Option<Vec<u8>> {
-        trace!("ORAM access: {:?} for ID {}", op, id);
-        // Get current path, or assign a random one if this is a new block
         let path = *self
             .position_map
             .entry(id)
@@ -120,8 +120,8 @@ impl PathORAM {
     }
 
     // Read all blocks along a specific path in the tree
+    #[instrument(skip(self), fields(leaf = %leaf), ret)]
     fn read_path(&mut self, leaf: usize) -> Vec<ORAMBlock> {
-        trace!("Reading path for leaf {}", leaf);
         let mut path = Vec::new();
         let mut node = leaf + (1 << ORAM_DEPTH) - 1;
         // Traverse from leaf to root, collecting all blocks
@@ -135,8 +135,8 @@ impl PathORAM {
     }
 
     // Write blocks from the stash back to the tree along a specific path
+    #[instrument(skip(self), fields(leaf = %leaf), ret)]
     fn write_path(&mut self, leaf: usize) {
-        trace!("Writing path for leaf {}", leaf);
         let mut node = leaf + (1 << ORAM_DEPTH) - 1;
         // Traverse from leaf to root, writing blocks at each node
         while node > 0 {

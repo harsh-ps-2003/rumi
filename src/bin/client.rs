@@ -9,6 +9,7 @@ use std::vec;
 use tonic::Response;
 use tracing::{debug, info, trace, warn, Level};
 use tracing_subscriber::{fmt, prelude::*};
+use tracing_attributes::instrument;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -29,6 +30,7 @@ enum Commands {
     },
 }
 
+#[instrument(skip(client, rumi_client), fields(identifier = %identifier), ret)]
 async fn lookup_identifier(
     client: &mut DiscoveryClient<tonic::transport::Channel>,
     rumi_client: &Client,
@@ -39,8 +41,6 @@ async fn lookup_identifier(
         .await?
         .into_inner()
         .identifiers;
-
-    trace!("Retrieved public set with {} identifiers", public_set.len());
 
     if !public_set.contains(&identifier) {
         info!(

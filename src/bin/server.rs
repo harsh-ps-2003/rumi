@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::{debug, info, warn, Level};
+use tracing_attributes::instrument;
 use tracing_subscriber::{fmt, prelude::*};
 use uuid::Uuid;
 
@@ -82,6 +83,7 @@ impl DiscoveryService {
 
 #[tonic::async_trait]
 impl Discovery for DiscoveryService {
+    #[instrument(skip(self, _request), name = "get_public_set", ret)]
     async fn get_public_set(
         &self,
         _request: Request<GetPublicSetRequest>,
@@ -104,7 +106,17 @@ impl Discovery for DiscoveryService {
         result
     }
 
-    async fn find(&self, request: Request<FindRequest>) -> Result<Response<FindResponse>, Status> {
+    #[instrument(
+        skip(self, request),
+        fields(
+            prefix_len = %request.get_ref().hash_prefix.len(),
+        ),
+        ret
+    )]
+    async fn find(
+        &self,
+        request: Request<FindRequest>
+    ) -> Result<Response<FindResponse>, Status> {
         let timer = REQUEST_DURATION.with_label_values(&["find"]).start_timer();
         REQUEST_COUNTER.with_label_values(&["find"]).inc();
 

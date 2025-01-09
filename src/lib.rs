@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use tracing::{debug, trace};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
+use tracing_attributes::instrument;
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
@@ -177,6 +178,7 @@ impl Client {
     /// Hashing the identifier
     /// Blinding the hash using the client's secret
     /// Returning the hash prefix and the blinded identifier point
+    #[instrument(skip(self), fields(identifier = %identifier), ret)]
     pub fn request_identifier(
         &self,
         identifier: u64,
@@ -186,17 +188,7 @@ impl Client {
         let client_blinded_identifier_point = hash_to_curve(identifier) * self.client_secret;
         let zksm_proof = generate_zksm_proof(identifier, public_set);
 
-        // Move debug prints to trace level
-        trace!("Generated ZKSM proof: {:?}", zksm_proof);
-        trace!(
-            "Client blinded point: {:?}",
-            client_blinded_identifier_point
-                .to_affine()
-                .to_encoded_point(true)
-        );
-
         let prefix = prefix(&hashed_identifier);
-        trace!("Generated prefix: {:?}", prefix);
 
         (
             prefix,
@@ -208,6 +200,11 @@ impl Client {
     }
 
     /// Attempts to un-blind a double-blinded identifier point to find and return the corresponding user ID point from a given bucket
+    #[instrument(
+        skip(self, double_blinded_identifier_point, bucket),
+        fields(identifier = %identifier),
+        ret
+    )]
     pub fn find_user_id(
         &self,
         double_blinded_identifier_point: &EncodedPoint,
