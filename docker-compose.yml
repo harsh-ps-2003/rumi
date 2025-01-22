@@ -19,7 +19,7 @@ services:
       - server
     networks:
       - rumi-net
-    command: ["lookup", "1000000042"]  # Example command, can be overridden
+    command: ["lookup", "1000000042"]  # Example command
 
 networks:
   rumi-net:

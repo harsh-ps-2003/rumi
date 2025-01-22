@@ -10,9 +10,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use tracing_attributes::instrument;
 
 // The depth of the ORAM tree determining the total nodes
-const ORAM_DEPTH: usize = 20;
+pub const ORAM_DEPTH: usize = 20;
 // The number of blocks that can be stored in each node of the tree
-const BUCKET_SIZE: usize = 4;
+pub const BUCKET_SIZE: usize = 4;
 
 // Read/Write ORAM operations
 #[derive(Debug, Clone, Copy, PartialEq)]

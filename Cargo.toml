@@ -47,6 +47,7 @@ reqwest = { version = "0.11", features = ["json"] }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tokio-console = "0.1.13"
+proptest = "1.4.0"
 
 [build-dependencies]
 tonic-build = "0.12.3"

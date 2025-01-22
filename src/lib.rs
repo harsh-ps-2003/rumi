@@ -242,7 +242,7 @@ impl Client {
 
 /// Encodes a UUID to a point on the P-256 curve using a hash-and-try method.
 /// This method is not constant-time but is suitable for this use case as the UUID is not secret.
-fn encode_to_point(user_id: &Uuid) -> AffinePoint {
+pub fn encode_to_point(user_id: &Uuid) -> AffinePoint {
     let mut hasher = Sha256::new();
     hasher.update(user_id.as_bytes());
     let mut counter = 0u64;
@@ -284,7 +284,7 @@ fn hash_to_curve(b: u64) -> ProjectivePoint {
 }
 
 /// Hash `b` with SHA-256.
-fn sha256(b: u64) -> [u8; 32] {
+pub fn sha256(b: u64) -> [u8; 32] {
     sha2::Sha256::new()
         .chain_update(b.to_be_bytes())
         .finalize()
@@ -292,13 +292,13 @@ fn sha256(b: u64) -> [u8; 32] {
 }
 
 /// Return an N-byte prefix
-fn prefix(bytes: &[u8]) -> Prefix {
+pub fn prefix(bytes: &[u8]) -> Prefix {
     bytes[..PREFIX_LEN]
         .try_into()
         .expect("Should be at least 8 bytes long")
 }
 
-fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
+pub fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     // Verify identifier is in public set
     if !public_set.contains(&identifier) {
         panic!("Identifier not in public set");
@@ -338,7 +338,7 @@ fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     proof
 }
 
-fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
+pub fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     debug!("Verifying ZKSM proof");
 
     let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
