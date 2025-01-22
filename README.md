@@ -284,6 +284,7 @@ Also, `tokio-console` can be used for more performance monitoring.
 
 ## Disclaimer
 
-This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur. 
-
+The Identifiers-UUID are hardcoded as it's a toy implementation.
 Not designed to be used in production!
+
+This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur.

@@ -6,8 +6,8 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, trace};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use tracing_attributes::instrument;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // The depth of the ORAM tree determining the total nodes
 pub const ORAM_DEPTH: usize = 20;

@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tracing::{debug, trace};
+use tracing_attributes::instrument;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
-use tracing_attributes::instrument;
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];

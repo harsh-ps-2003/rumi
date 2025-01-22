@@ -8,8 +8,8 @@ use std::error::Error;
 use std::vec;
 use tonic::Response;
 use tracing::{debug, info, trace, warn, Level};
-use tracing_subscriber::{fmt, prelude::*};
 use tracing_attributes::instrument;
+use tracing_subscriber::{fmt, prelude::*};
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");

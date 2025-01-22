@@ -113,10 +113,7 @@ impl Discovery for DiscoveryService {
         ),
         ret
     )]
-    async fn find(
-        &self,
-        request: Request<FindRequest>
-    ) -> Result<Response<FindResponse>, Status> {
+    async fn find(&self, request: Request<FindRequest>) -> Result<Response<FindResponse>, Status> {
         let timer = REQUEST_DURATION.with_label_values(&["find"]).start_timer();
         REQUEST_COUNTER.with_label_values(&["find"]).inc();
 
