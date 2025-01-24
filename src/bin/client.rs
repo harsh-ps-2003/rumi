@@ -2,9 +2,8 @@ use clap::Parser;
 use console::style;
 use rumi::Client;
 use rumi_proto::{
-    discovery_client::DiscoveryClient,
-    FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse,
-    RegisterRequest, RegisterResponse,
+    discovery_client::DiscoveryClient, FindRequest, FindResponse, GetPublicSetRequest,
+    GetPublicSetResponse, RegisterRequest, RegisterResponse,
 };
 use std::collections::HashMap;
 use std::error::Error;

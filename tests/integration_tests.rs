@@ -137,30 +137,30 @@ proptest! {
     ) {
         let mut rng = StdRng::from_entropy();
         let mut server = Server::new(&mut rng, &initial_users);
-        
+
         // Skip if the new_id is already registered
         prop_assume!(!initial_users.contains_key(&new_id));
-        
+
         // Registration should succeed
         let result = server.register(new_id, &new_uuid, &mut rng);
         prop_assert!(result.is_ok());
-        
+
         // Verify the identifier is now in the public set
         let public_set = server.get_public_set();
         prop_assert!(public_set.contains(&new_id));
-        
+
         // Verify we can look up the registered UUID
         let client = Client::new(&mut rng);
         let (prefix, blinded_point, zksm_proof) = client.request_identifier(new_id, &public_set);
         let double_blinded = server.blind_identifier(&blinded_point);
-        
+
         let bucket = server.find_bucket(prefix, &zksm_proof, &mut rng).unwrap();
         let found_user_id = client.find_user_id(&double_blinded, &bucket, new_id);
-        
+
         prop_assert!(found_user_id.is_some());
         let user_id_point = found_user_id.unwrap();
         let recovered_uuid = server.unblind_user_id(&user_id_point);
-        
+
         prop_assert_eq!(recovered_uuid, Some(new_uuid));
     }
 
@@ -173,31 +173,31 @@ proptest! {
         prop_assume!(!initial_users.is_empty());
         let mut rng = StdRng::from_entropy();
         let mut server = Server::new(&mut rng, &initial_users);
-        
+
         // Try to register an existing identifier with a new UUID
         let existing_id = *initial_users.keys().next().unwrap();
         let result = server.register(existing_id, &new_uuid, &mut rng);
-        
+
         // Registration should fail
         prop_assert!(result.is_err());
         prop_assert_eq!(result.unwrap_err(), "Identifier already registered");
-        
+
         // Public set should remain unchanged
         let public_set = server.get_public_set();
         prop_assert_eq!(public_set.len(), initial_users.len());
-        
+
         // Original mapping should still work
         let client = Client::new(&mut rng);
         let (prefix, blinded_point, zksm_proof) = client.request_identifier(existing_id, &public_set);
         let double_blinded = server.blind_identifier(&blinded_point);
-        
+
         let bucket = server.find_bucket(prefix, &zksm_proof, &mut rng).unwrap();
         let found_user_id = client.find_user_id(&double_blinded, &bucket, existing_id);
-        
+
         prop_assert!(found_user_id.is_some());
         let user_id_point = found_user_id.unwrap();
         let recovered_uuid = server.unblind_user_id(&user_id_point);
-        
+
         // Should still map to the original UUID
         prop_assert_eq!(recovered_uuid, initial_users.get(&existing_id).cloned());
     }
@@ -211,7 +211,7 @@ proptest! {
         let mut rng = StdRng::from_entropy();
         let mut server = Server::new(&mut rng, &initial_users);
         let mut all_users = initial_users.clone();
-        
+
         for (id, uuid) in new_registrations {
             if !all_users.contains_key(&id) {
                 let result = server.register(id, &uuid, &mut rng);
@@ -219,22 +219,22 @@ proptest! {
                 all_users.insert(id, uuid);
             }
         }
-        
+
         // Verify all registrations are accessible
         let client = Client::new(&mut rng);
         let public_set = server.get_public_set();
-        
+
         for (&id, &expected_uuid) in &all_users {
             let (prefix, blinded_point, zksm_proof) = client.request_identifier(id, &public_set);
             let double_blinded = server.blind_identifier(&blinded_point);
-            
+
             let bucket = server.find_bucket(prefix, &zksm_proof, &mut rng).unwrap();
             let found_user_id = client.find_user_id(&double_blinded, &bucket, id);
-            
+
             prop_assert!(found_user_id.is_some());
             let user_id_point = found_user_id.unwrap();
             let recovered_uuid = server.unblind_user_id(&user_id_point);
-            
+
             prop_assert_eq!(recovered_uuid, Some(expected_uuid));
         }
     }

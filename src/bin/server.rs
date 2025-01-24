@@ -1,7 +1,7 @@
 use crate::rumi_proto::{
     discovery_server::{Discovery, DiscoveryServer},
-    FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse,
-    RegisterRequest, RegisterResponse,
+    FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse, RegisterRequest,
+    RegisterResponse,
 };
 use console::style;
 use lazy_static::lazy_static;
@@ -62,12 +62,10 @@ pub struct DiscoveryService {
 impl DiscoveryService {
     pub fn new() -> Self {
         let mut rng = rand::thread_rng();
-        let users = HashMap::new();  // Start with empty user set
+        let users = HashMap::new(); // Start with empty user set
 
         let server = Server::new(&mut rng, &users);
-        debug!(
-            "Server initialized with empty user set",
-        );
+        debug!("Server initialized with empty user set",);
 
         Self {
             server: Arc::new(Mutex::new(server)),
