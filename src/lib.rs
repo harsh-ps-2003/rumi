@@ -164,6 +164,40 @@ impl Server {
         let public_set = self.get_public_set();
         verify_zksm_proof(&public_set, proof)
     }
+
+    /// Register a new identifier-UUID pair
+    pub fn register(
+        &mut self,
+        identifier: u64,
+        user_id: &Uuid,
+        rng: &mut (impl CryptoRng + RngCore),
+    ) -> Result<(), &'static str> {
+        // Verify the identifier is not already registered
+        if self.oram.get_all_identifiers().contains(&identifier) {
+            return Err("Identifier already registered");
+        }
+
+        let hashed_identifier = sha256(identifier);
+        let blinded_identifier_point = hash_to_curve(identifier) * self.server_secret;
+        let user_id_point = encode_to_point(user_id);
+        let blinded_user_id = user_id_point
+            * self.server_secret
+            * Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
+
+        let block = ORAMBlock {
+            blinded_identifier: blinded_identifier_point.to_affine().to_encoded_point(true),
+            blinded_user_id: blinded_user_id.to_affine().to_encoded_point(true),
+        };
+
+        self.oram.access(
+            Operation::Write,
+            identifier,
+            Some(bincode::serialize(&block).map_err(|_| "Serialization failed")?),
+            rng,
+        );
+
+        Ok(())
+    }
 }
 
 impl Client {

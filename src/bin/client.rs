@@ -1,8 +1,11 @@
 use clap::Parser;
 use console::style;
 use rumi::Client;
-use rumi_proto::discovery_client::DiscoveryClient;
-use rumi_proto::{FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse};
+use rumi_proto::{
+    discovery_client::DiscoveryClient,
+    FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse,
+    RegisterRequest, RegisterResponse,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::vec;
@@ -10,6 +13,7 @@ use tonic::Response;
 use tracing::{debug, info, trace, warn, Level};
 use tracing_attributes::instrument;
 use tracing_subscriber::{fmt, prelude::*};
+use uuid::Uuid;
 
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
@@ -27,6 +31,12 @@ enum Commands {
     Lookup {
         #[arg(help = "The identifier to look up")]
         identifier: u64,
+    },
+    Register {
+        #[arg(help = "The identifier to register")]
+        identifier: u64,
+        #[arg(help = "The UUID to register (optional, will generate if not provided)")]
+        uuid: Option<String>,
     },
 }
 
@@ -117,26 +127,71 @@ async fn lookup_identifier(
     Ok(())
 }
 
+#[instrument(skip(client), fields(identifier = %identifier), ret)]
+async fn register_identifier(
+    client: &mut DiscoveryClient<tonic::transport::Channel>,
+    identifier: u64,
+    uuid_str: Option<String>,
+) -> Result<(), Box<dyn Error>> {
+    let uuid = if let Some(uuid_str) = uuid_str {
+        Uuid::parse_str(&uuid_str)?
+    } else {
+        Uuid::new_v4()
+    };
+
+    info!(
+        "Registering identifier {} with UUID {}",
+        style(identifier).cyan(),
+        style(uuid).yellow()
+    );
+
+    let request = tonic::Request::new(RegisterRequest {
+        identifier,
+        uuid: uuid.as_bytes().to_vec(),
+    });
+
+    match client.register(request).await {
+        Ok(response) => {
+            let response = response.into_inner();
+            if response.success {
+                info!(
+                    "{} {}",
+                    style("✓").green().bold(),
+                    style(&response.message).green()
+                );
+            } else {
+                info!(
+                    "{} {}",
+                    style("✗").red().bold(),
+                    style(&response.message).red()
+                );
+            }
+        }
+        Err(status) => {
+            warn!(
+                "{} Registration failed: {}",
+                style("✗").red().bold(),
+                style(status).red()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Set up single combined subscriber
-    let console_layer = console_subscriber::ConsoleLayer::builder()
-        .with_default_env()
-        .spawn();
+    // Set up logging based on RUST_LOG env var, defaulting to info level
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    tracing_subscriber::registry()
-        .with(console_layer)
-        .with(
-            fmt::layer()
-                .with_target(false)
-                .with_thread_ids(false)
-                .with_line_number(false)
-                .with_level(true),
-        )
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_line_number(false)
+        .with_level(true)
+        .with_env_filter(env_filter)
         .init();
-
-    info!("RUMI Client starting up");
-    info!("Tokio Console available on http://127.0.0.1:6669");
 
     let cli = Cli::parse();
 
@@ -145,6 +200,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut client = DiscoveryClient::connect("http://[::1]:50051").await?;
             let rumi_client = Client::new(rand::thread_rng());
             lookup_identifier(&mut client, &rumi_client, identifier).await?;
+        }
+        Commands::Register { identifier, uuid } => {
+            let mut client = DiscoveryClient::connect("http://[::1]:50051").await?;
+            register_identifier(&mut client, identifier, uuid).await?;
         }
     }
 

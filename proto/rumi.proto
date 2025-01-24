@@ -1,29 +1,53 @@
 syntax = "proto3";
 package rumi;
 
+// The discovery service definition
 service Discovery {
+    // Get the set of registered identifiers
     rpc GetPublicSet (GetPublicSetRequest) returns (GetPublicSetResponse);
+    
+    // Find a user by their identifier
     rpc Find (FindRequest) returns (FindResponse);
+    
+    // Register a new identifier-UUID pair
+    rpc Register(RegisterRequest) returns (RegisterResponse);
 }
 
+// Request for getting the public set of identifiers
 message GetPublicSetRequest {}
 
+// Response containing the public set of identifiers
 message GetPublicSetResponse {
     repeated uint64 identifiers = 1;
 }
 
+// Request for finding a user
 message FindRequest {
     bytes hash_prefix = 1;
     bytes blinded_identifier = 2;
     string zksm_proof = 3;
 }
 
+// A bucket entry in the response
+message BucketEntry {
+    bytes blinded_identifier = 1;
+    bytes blinded_user_id = 2;
+}
+
+// Response for finding a user
 message FindResponse {
     bytes double_blinded_identifier = 1;
     repeated BucketEntry entries = 2;
 }
 
-message BucketEntry {
-    bytes blinded_identifier = 1;
-    bytes blinded_user_id = 2;
+// Request for registering a new identifier-UUID pair
+message RegisterRequest {
+    uint64 identifier = 1;
+    bytes uuid = 2;
+}
+
+// Response for registration
+message RegisterResponse {
+    bool success = 1;
+    string message = 2;
 }

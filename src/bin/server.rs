@@ -1,4 +1,8 @@
-use crate::rumi_proto::{GetPublicSetRequest, GetPublicSetResponse};
+use crate::rumi_proto::{
+    discovery_server::{Discovery, DiscoveryServer},
+    FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse,
+    RegisterRequest, RegisterResponse,
+};
 use console::style;
 use lazy_static::lazy_static;
 use p256::EncodedPoint;
@@ -21,11 +25,6 @@ use uuid::Uuid;
 pub mod rumi_proto {
     tonic::include_proto!("rumi");
 }
-
-use rumi_proto::{
-    discovery_server::{Discovery, DiscoveryServer},
-    FindRequest, FindResponse,
-};
 
 // Define metrics
 lazy_static! {
@@ -63,16 +62,11 @@ pub struct DiscoveryService {
 impl DiscoveryService {
     pub fn new() -> Self {
         let mut rng = rand::thread_rng();
-        let mut users = HashMap::new();
-
-        for i in 0..100 {
-            users.insert(1_000_000_000 + i, Uuid::new_v4());
-        }
+        let users = HashMap::new();  // Start with empty user set
 
         let server = Server::new(&mut rng, &users);
         debug!(
-            "Server initialized with identifiers: {:?}",
-            server.get_public_set()
+            "Server initialized with empty user set",
         );
 
         Self {
@@ -168,10 +162,62 @@ impl Discovery for DiscoveryService {
         timer.observe_duration();
         result
     }
+
+    #[instrument(skip(self, request), name = "register", ret)]
+    async fn register(
+        &self,
+        request: Request<RegisterRequest>,
+    ) -> Result<Response<RegisterResponse>, Status> {
+        let timer = REQUEST_DURATION
+            .with_label_values(&["register"])
+            .start_timer();
+        REQUEST_COUNTER.with_label_values(&["register"]).inc();
+
+        let result = {
+            let request_inner = request.into_inner();
+            let identifier = request_inner.identifier;
+            let uuid_bytes = request_inner.uuid;
+
+            let uuid = Uuid::from_slice(&uuid_bytes)
+                .map_err(|_| Status::invalid_argument("Invalid UUID format"))?;
+
+            let mut rng = rand::thread_rng();
+            let mut server = self
+                .server
+                .lock()
+                .map_err(|_| Status::internal("Server lock poisoned"))?;
+
+            match server.register(identifier, &uuid, &mut rng) {
+                Ok(()) => Ok(Response::new(RegisterResponse {
+                    success: true,
+                    message: format!("Successfully registered identifier {}", identifier),
+                })),
+                Err(e) => Ok(Response::new(RegisterResponse {
+                    success: false,
+                    message: e.to_string(),
+                })),
+            }
+        };
+
+        timer.observe_duration();
+        result
+    }
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up logging based on RUST_LOG env var, defaulting to info level
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_line_number(false)
+        .with_level(true)
+        .with_env_filter(env_filter)
+        .init();
+
     let addr = "[::1]:50051".parse()?;
     let service = DiscoveryService::new();
 
@@ -183,6 +229,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register(Box::new(REQUEST_DURATION.clone()))
         .unwrap();
     REGISTRY.register(Box::new(MEMORY_GAUGE.clone())).unwrap();
+
+    info!("RUMI Server starting up on {}", style(addr).cyan());
 
     // Start metrics pushing in background
     tokio::spawn(async {
@@ -217,40 +265,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     warn!("Failed to push metrics: {}", e);
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
         }
     });
-
-    // Set up console and tracing
-    let console_layer = console_subscriber::ConsoleLayer::builder()
-        .with_default_env()
-        .spawn();
-
-    tracing_subscriber::registry()
-        .with(console_layer)
-        .with(
-            fmt::layer()
-                .with_target(false)
-                .with_thread_ids(true)
-                .with_file(true)
-                .with_line_number(true)
-                .with_level(true),
-        )
-        .init();
-
-    info!("{}", style("RUMI Discovery Server").green().bold());
-    info!("Listening on {}", style(addr).cyan());
-    info!(
-        "Initialized with {} identifiers",
-        style(service.server.lock().unwrap().get_public_set().len()).yellow()
-    );
-    info!("Tokio Console available on http://127.0.0.1:6669");
-    info!("Metrics being pushed to Prometheus");
-
-    debug!(
-        "Public set: {:?}",
-        service.server.lock().unwrap().get_public_set()
-    );
 
     TonicServer::builder()
         .add_service(DiscoveryServer::new(service))
