@@ -253,14 +253,14 @@ The best blog to learn ECC that I could find out was [this](https://andrea.corbe
 
 Current ORAM Usage prevents access pattern leakage, hides which identifiers are being queried, provides O(log n) access complexity and ensures fixed-size responses.
 
-1. Add support for Private Information Retrieval (PIR) to further reduce server knowledge. Think about IT-PIR (if distributed servers are involved), cPIR (using Homomorphic encryptions but huge computational overhead). Try tinkering with Hybrid PIR-ORAM scheme referenced in [this](https://arxiv.org/pdf/1904.05452) paper for further security-performance tradeoff. Use of PIR has significant performance tradeoffs! Distributed PIR bestows us stronger security and horizontal scalability. Though PIR may leak DB size.
-2. Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
-3. Implement a secure update mechanism using ZKPs.
-4. Explore Ring Signatures as its more efficient than ZKSM for larger sets (proof size grows linearly with set size though) while providing stronger anonymity!
-5. Goals:
+* Add a in-memory persistence layer
+* Add support for Private Information Retrieval (PIR) to further reduce server knowledge. Think about IT-PIR (if distributed servers are involved), cPIR (using Homomorphic encryptions but huge computational overhead). Try tinkering with Hybrid PIR-ORAM scheme referenced in [this](https://arxiv.org/pdf/1904.05452) paper for further security-performance tradeoff. Use of PIR has significant performance tradeoffs! Distributed PIR bestows us stronger security and horizontal scalability. Though PIR may leak DB size.
+* Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
+* Implement a secure update mechanism using ZKPs.
+* Explore Ring Signatures as its more efficient than ZKSM for larger sets (proof size grows linearly with set size though) while providing stronger anonymity!
+* Goals:
    - Write: <15μs (17% improvement)
    - Read:  <50μs (50% improvement)
-6. Tackle side channel attacks!
 
 ## Analysis 
 

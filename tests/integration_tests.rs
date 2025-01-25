@@ -161,6 +161,7 @@ proptest! {
         let user_id_point = found_user_id.unwrap();
         let recovered_uuid = server.unblind_user_id(&user_id_point);
 
+        // The recovered UUID should match the one we registered
         prop_assert_eq!(recovered_uuid, Some(new_uuid));
     }
 
@@ -176,6 +177,7 @@ proptest! {
 
         // Try to register an existing identifier with a new UUID
         let existing_id = *initial_users.keys().next().unwrap();
+        let original_uuid = initial_users[&existing_id];
         let result = server.register(existing_id, &new_uuid, &mut rng);
 
         // Registration should fail
@@ -199,7 +201,7 @@ proptest! {
         let recovered_uuid = server.unblind_user_id(&user_id_point);
 
         // Should still map to the original UUID
-        prop_assert_eq!(recovered_uuid, initial_users.get(&existing_id).cloned());
+        prop_assert_eq!(recovered_uuid, Some(original_uuid));
     }
 
     // Property: Multiple registrations should maintain consistency
@@ -212,6 +214,7 @@ proptest! {
         let mut server = Server::new(&mut rng, &initial_users);
         let mut all_users = initial_users.clone();
 
+        // Track successful registrations
         for (id, uuid) in new_registrations {
             if !all_users.contains_key(&id) {
                 let result = server.register(id, &uuid, &mut rng);
@@ -235,7 +238,9 @@ proptest! {
             let user_id_point = found_user_id.unwrap();
             let recovered_uuid = server.unblind_user_id(&user_id_point);
 
-            prop_assert_eq!(recovered_uuid, Some(expected_uuid));
+            prop_assert_eq!(recovered_uuid, Some(expected_uuid), 
+                "UUID mismatch for id {}: expected {:?}, got {:?}", 
+                id, expected_uuid, recovered_uuid);
         }
     }
 }
