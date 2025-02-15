@@ -63,7 +63,11 @@ The privacy guarantees are:
 
 ## Demo
 
-To start the server, run `cargo run --bin server` in one terminal. The server will start with 100 demo identifiers (1000000000 through 1000000099). Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
+First set `UUID=$(uuidgen)`.
+
+Then, to start the server, run `cargo run --bin server` in one terminal.
+The server will start with 100 demo identifiers (1000000000 through 1000000099).
+Register the identifier you want to lookup later using `cargo run --bin client register 1000000042 $UUID` Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
 
 ## How it works?
 
