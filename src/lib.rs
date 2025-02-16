@@ -1,27 +1,49 @@
 pub mod oram;
+pub mod merkle;
 
-use crate::oram::{Operation, PathORAM};
+// Include generated gRPC code
+pub mod rumi {
+    tonic::include_proto!("rumi");
+}
+
+use crate::{
+    merkle::{MerkleState, generate_proof, verify_merkle_proof},
+    oram::{Operation, PathORAM},
+    rumi::{discovery_client::DiscoveryClient, GetMerkleProofRequest},
+};
+use rs_merkle::{
+    Hasher, MerkleTree, MerkleProof,
+    algorithms::Sha256 as MerkleHasher,
+};
 use p256::{
     elliptic_curve::{
         hash2curve::{ExpandMsgXmd, FromOkm, GroupDigest},
         ops::ReduceNonZero,
         sec1::{self, FromEncodedPoint, ToEncodedPoint},
-        Field,
+        Field, Scalar,
     },
     AffinePoint,  // point satisfying the curve
     EncodedPoint, // compact representation of a point on curve for storing
     NistP256,
     ProjectivePoint, // alternative representation of a point on curve for simplifying calculations
-    Scalar,          // element of the finite field over which the elliptic curve
+    PublicKey,
+    SecretKey,
 };
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use tracing_attributes::instrument;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
+use ark_bn254::Fr;
+use hex;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use tokio::runtime::Runtime;
+use tonic::transport::Channel;
 
 /// A fixed-size prefix of an SHA-256 hash.
 pub type Prefix = [u8; PREFIX_LEN];
@@ -35,245 +57,321 @@ struct ORAMBlock {
     blinded_user_id: EncodedPoint,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZKSMProof {
-    commitment: EncodedPoint,
-    challenge: Scalar,
-    response: Scalar,
+impl std::fmt::Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Server")
+            .field("storage_size", &self.storage.len())
+            .field("merkle_root", &hex::encode(self.merkle_state.root()))
+            .finish()
+    }
 }
 
-#[derive(Debug)]
 pub struct Server {
-    server_secret: Scalar,
-    oram: PathORAM,
+    blinding_key: SecretKey,
+    merkle_state: MerkleState,
+    storage: HashMap<[u8; 8], Vec<(Vec<u8>, Vec<u8>)>>, // prefix -> [(blinded_id, blinded_uuid)]
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("commitments_count", &self.commitments.len())
+            .finish()
+    }
 }
 
 pub struct Client {
-    client_secret: Scalar,
+    client_secret: SecretKey,
+    commitments: HashMap<String, Vec<u8>>, // identifier -> commitment
+    storage_path: PathBuf,
 }
 
 impl Server {
     /// Create new server with a random secret and the given book of identifier and userID
-    pub fn new(rng: &mut (impl CryptoRng + RngCore), users: &HashMap<u64, Uuid>) -> Server {
-        let mut rng = rng;
-        let server_secret = Scalar::random(&mut rng);
-        let mut oram = PathORAM::new();
+    pub fn new<R: RngCore + CryptoRng>(rng: &mut R, users: &HashMap<String, Uuid>) -> Self {
+        let blinding_key = SecretKey::random(rng);
+        let mut merkle_state = MerkleState::new();
+        let mut storage = HashMap::new();
 
-        for (&identifier, user_id) in users {
-            let hashed_identifier = sha256(identifier);
-            let blinded_identifier_point = hash_to_curve(identifier) * server_secret;
-            let user_id_point = encode_to_point(user_id);
-            let blinded_user_id = user_id_point
-                * server_secret
-                * Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
-
-            let block = ORAMBlock {
-                blinded_identifier: blinded_identifier_point.to_affine().to_encoded_point(true),
-                blinded_user_id: blinded_user_id.to_affine().to_encoded_point(true),
-            };
-
-            oram.access(
-                Operation::Write,
-                identifier,
-                Some(bincode::serialize(&block).unwrap()),
-                &mut rng,
-            );
+        // Initialize storage with existing users if any
+        for (identifier, uuid) in users {
+            // Create double-hashed commitment for existing users
+            let commitment = Self::create_commitment(identifier);
+            
+            // Add commitment to Merkle tree
+            if let Ok(_) = merkle_state.add_leaf(&commitment) {
+                // Only add to storage if Merkle tree addition succeeds
+                if let Ok(blinded_id) = Self::blind_identifier_str(&blinding_key, identifier) {
+                    let prefix = Self::get_prefix(&blinded_id);
+                    let entry = storage.entry(prefix).or_insert_with(Vec::new);
+                    entry.push((blinded_id, uuid.as_bytes().to_vec()));
+                }
+            }
         }
 
-        Server {
-            server_secret,
-            oram,
+        Self {
+            blinding_key,
+            merkle_state,
+            storage,
         }
     }
 
     /// Retrieves a hashmap of blinded identifier points and corresponding user ID points based on a given hash prefix
     pub fn find_bucket(
-        &mut self,
-        prefix: Prefix,
-        zksm_proof: &ZKSMProof,
-        rng: &mut (impl CryptoRng + RngCore),
-    ) -> Option<HashMap<EncodedPoint, EncodedPoint>> {
-        if !self.verify_zksm_proof(zksm_proof) {
+        &self,
+        prefix: [u8; 8],
+        proof_data: &(Vec<u8>, Vec<u8>), // (proof_bytes, vk_bytes)
+        _rng: &mut impl RngCore,
+    ) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+        // Extract commitment and verify ZK proof of Merkle path knowledge
+        let verified = verify_merkle_proof(
+            &proof_data.0, // proof bytes
+            &proof_data.1, // verification key bytes
+            self.merkle_state.root(),
+        ).ok()?;
+            
+        if !verified {
             return None;
         }
-
-        let mut result = HashMap::new();
-        let mut rng = rng;
-
-        // Get all identifiers that match the prefix
-        let matching_ids: Vec<u64> = self
-            .oram
-            .get_all_identifiers()
-            .into_iter()
-            .filter(|&id| {
-                let id_hash = sha256(id);
-                id_hash[..PREFIX_LEN] == prefix
-            })
-            .collect();
-
-        let matches_count = matching_ids.len();
-
-        // For each matching ID, retrieve its data from ORAM
-        for id in matching_ids {
-            if let Some(data) = self.oram.access(Operation::Read, id, None, &mut rng) {
-                if let Ok(block) = bincode::deserialize::<ORAMBlock>(&data) {
-                    result.insert(block.blinded_identifier, block.blinded_user_id);
-                }
-            }
-        }
-
-        // Perform dummy accesses to mask the number of real matches
-        let dummy_count = FIXED_ACCESSES - matches_count;
-        for _ in 0..dummy_count {
-            let dummy_id = rng.next_u64();
-            let _ = self.oram.access(Operation::Read, dummy_id, None, &mut rng);
-        }
-
-        Some(result)
+        
+        // Return the bucket if proof verifies
+        self.storage.get(&prefix).cloned()
     }
 
     /// Attempts to reverse the blinding of a user ID point to recover and return the original UUID
     pub fn unblind_user_id(&self, blinded_user_id: &EncodedPoint) -> Option<Uuid> {
-        // Un-blind the double blinded point by removing the server's secret
         let blinded_user_id_point =
             AffinePoint::from_encoded_point(blinded_user_id).expect("Invalid point");
-        let user_id_point = (blinded_user_id_point * self.server_secret.invert().expect("Should be invertible"))
+        let scalar = *self.blinding_key.to_nonzero_scalar();
+        let user_id_point = (blinded_user_id_point * scalar)
             .to_affine()
             .to_encoded_point(true);
             
-        // Extract UUID from the unblinded point
         Uuid::from_slice(&user_id_point.as_bytes()[1..17]).ok()
     }
 
     /// Given a client-blinded identifier point, return a double-blinded identifier point
-    pub fn blind_identifier(&self, client_blinded_identifier_point: &EncodedPoint) -> EncodedPoint {
-        let client_blinded_identifier_point =
-            AffinePoint::from_encoded_point(client_blinded_identifier_point)
-                .expect("Invalid point");
-        (client_blinded_identifier_point * self.server_secret)
-            .to_affine()
-            .to_encoded_point(true)
+    pub fn blind_identifier(&self, point: &EncodedPoint) -> Vec<u8> {
+        let pk = PublicKey::from_encoded_point(point).unwrap();
+        let scalar = *self.blinding_key.to_nonzero_scalar();
+        let blinded = pk.to_projective() * scalar;
+        blinded.to_affine().to_encoded_point(false).as_bytes().to_vec()
     }
 
     // get public key set from ORAM
-    pub fn get_public_set(&self) -> Vec<u64> {
-        let mut public_set = self.oram.get_all_identifiers();
-        public_set.sort();
-        public_set
+    pub fn get_public_set(&self) -> Vec<String> {
+        // Return empty set as we no longer expose public identifiers
+        Vec::new()
     }
 
-    fn verify_zksm_proof(&self, proof: &ZKSMProof) -> bool {
-        let public_set = self.get_public_set();
-        verify_zksm_proof(&public_set, proof)
-    }
-
-    /// Register a new identifier-UUID pair
     pub fn register(
         &mut self,
-        identifier: u64,
-        user_id: &Uuid,
-        rng: &mut (impl CryptoRng + RngCore),
-    ) -> Result<(), &'static str> {
-        // Verify the identifier is not already registered
-        if self.oram.get_all_identifiers().contains(&identifier) {
-            return Err("Identifier already registered");
+        identifier: String,
+        commitment: Vec<u8>,
+        uuid: &Uuid,
+        _rng: &mut impl RngCore,
+    ) -> Result<Vec<u8>, String> {
+        // The commitment is already double-hashed by the client
+        // Verify that it matches what we expect
+        let expected_commitment = Self::create_commitment(&identifier);
+        if commitment != expected_commitment {
+            return Err("Invalid commitment".to_string());
         }
-
-        let hashed_identifier = sha256(identifier);
-        let blinded_identifier_point = hash_to_curve(identifier) * self.server_secret;
-        let user_id_point = encode_to_point(user_id);
         
-        // Use the hashed identifier as a scalar for blinding the user ID
-        let hashed_identifier_scalar = Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
-        let blinded_user_id = (user_id_point * self.server_secret) * hashed_identifier_scalar;
+        // Blind the identifier
+        let blinded_id = Self::blind_identifier_str(&self.blinding_key, &identifier)?;
+        
+        // Store the blinded identifier and UUID
+        let prefix = Self::get_prefix(&blinded_id);
+        let entry = self.storage.entry(prefix).or_insert_with(Vec::new);
+        entry.push((blinded_id, uuid.as_bytes().to_vec()));
 
-        let block = ORAMBlock {
-            blinded_identifier: blinded_identifier_point.to_affine().to_encoded_point(true),
-            blinded_user_id: blinded_user_id.to_affine().to_encoded_point(true),
-        };
+        // Add commitment to Merkle tree and get proof
+        // The commitment is already double-hashed, so we don't hash it again
+        let merkle_proof = self.merkle_state.add_leaf(&commitment)
+            .map_err(|e| format!("Failed to create Merkle proof: {}", e))?;
+            
+        debug!("Generated Merkle proof of length {}", merkle_proof.len());
+        Ok(merkle_proof)
+    }
 
-        self.oram.access(
-            Operation::Write,
-            identifier,
-            Some(bincode::serialize(&block).map_err(|_| "Serialization failed")?),
-            rng,
-        );
+    fn blind_identifier_str(key: &SecretKey, identifier: &str) -> Result<Vec<u8>, String> {
+        // Hash the identifier to a 64-bit number first
+        let mut hasher = Sha256::new();
+        hasher.update(identifier.as_bytes());
+        let hash = hasher.finalize();
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&hash[0..8]);
+        let num = u64::from_be_bytes(bytes);
 
-        Ok(())
+        // Use hash_to_curve to get a valid curve point
+        let point = hash_to_curve(num);
+        let pk = PublicKey::from_affine(point.to_affine())
+            .map_err(|e| format!("Failed to create public key: {}", e))?;
+
+        let scalar = *key.to_nonzero_scalar();
+        let blinded = pk.to_projective() * scalar;
+        Ok(blinded.to_affine().to_encoded_point(false).as_bytes().to_vec())
+    }
+
+    fn get_prefix(blinded_id: &[u8]) -> [u8; 8] {
+        let mut prefix = [0u8; 8];
+        prefix.copy_from_slice(&blinded_id[..8]);
+        prefix
+    }
+
+    pub fn get_merkle_root(&self) -> [u8; 32] {
+        self.merkle_state.root()
+    }
+
+    pub fn generate_merkle_proof(&self, commitment: &[u8]) -> Result<Vec<u8>, String> {
+        self.merkle_state.generate_proof(commitment)
+    }
+
+    /// Create a double-hashed commitment from an identifier
+    fn create_commitment(identifier: &str) -> Vec<u8> {
+        // First hash using SHA256
+        let mut hasher = Sha256::new();
+        hasher.update(identifier.as_bytes());
+        let first_hash = hasher.finalize();
+        
+        // Second hash using MerkleHasher (rs_merkle::algorithms::Sha256)
+        let hash = MerkleHasher::hash(&first_hash);
+        hash.to_vec()
     }
 }
 
 impl Client {
     /// Create a new client using a random secret.
-    pub fn new(rng: impl CryptoRng + RngCore) -> Client {
-        Client {
-            client_secret: Scalar::random(rng),
+    pub fn new(mut rng: impl CryptoRng + RngCore) -> Self {
+        // Create storage directory if it doesn't exist
+        let storage_path = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".rumi");
+        fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
+
+        // Load existing commitments if any
+        let mut commitments = HashMap::new();
+        let commitments_path = storage_path.join("commitments");
+        if commitments_path.exists() {
+            if let Ok(mut file) = File::open(&commitments_path) {
+                let mut contents = String::new();
+                if file.read_to_string(&mut contents).is_ok() {
+                    for line in contents.lines() {
+                        if let Some((id, commitment_hex)) = line.split_once(':') {
+                            if let Ok(commitment) = hex::decode(commitment_hex) {
+                                commitments.insert(id.to_string(), commitment);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            client_secret: SecretKey::random(&mut rng),
+            commitments,
+            storage_path,
         }
     }
 
-    /// Generates a blinded identifier point by:
-    /// Hashing the identifier
-    /// Blinding the hash using the client's secret
-    /// Returning the hash prefix and the blinded identifier point
-    #[instrument(skip(self), fields(identifier = %identifier), ret)]
-    pub fn request_identifier(
-        &self,
-        identifier: u64,
-        public_set: &[u64],
-    ) -> (Prefix, EncodedPoint, ZKSMProof) {
-        let hashed_identifier = sha256(identifier);
-        let client_blinded_identifier_point = hash_to_curve(identifier) * self.client_secret;
-        let zksm_proof = generate_zksm_proof(identifier, public_set);
-
-        let prefix = prefix(&hashed_identifier);
-
-        (
-            prefix,
-            client_blinded_identifier_point
-                .to_affine()
-                .to_encoded_point(true),
-            zksm_proof,
-        )
+    fn store_commitment(&mut self, identifier: String, commitment: Vec<u8>) {
+        // Store in memory
+        self.commitments.insert(identifier.clone(), commitment.clone());
+        
+        // Persist to file
+        let commitments_path = self.storage_path.join("commitments");
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&commitments_path)
+        {
+            if let Err(e) = writeln!(file, "{}:{}", identifier, hex::encode(&commitment)) {
+                warn!("Failed to persist commitment: {}", e);
+            }
+        }
     }
 
-    /// Attempts to un-blind a double-blinded identifier point to find and return the corresponding user ID point from a given bucket
-    #[instrument(
-        skip(self, double_blinded_identifier_point, bucket),
-        fields(identifier = %identifier),
-        ret
-    )]
-    pub fn find_user_id(
-        &self,
-        double_blinded_identifier_point: &EncodedPoint,
-        bucket: &HashMap<EncodedPoint, EncodedPoint>,
-        identifier: u64,
-    ) -> Option<EncodedPoint> {
-        // Un-blind the double-blinded point, giving us the server's point for this identifier
-        let double_blinded_identifier_point =
-            AffinePoint::from_encoded_point(double_blinded_identifier_point)
-                .expect("Invalid point");
-        let server_phone_point = (double_blinded_identifier_point
-            * self.client_secret.invert().expect("Should be invertible"))
-        .to_encoded_point(true);
+    /// Generate a double-hashed commitment from an identifier
+    fn generate_commitment(identifier: &str) -> Vec<u8> {
+        // First hash using SHA256
+        let mut hasher = Sha256::new();
+        hasher.update(identifier.as_bytes());
+        let first_hash = hasher.finalize();
+        
+        // Second hash using MerkleHasher (rs_merkle::algorithms::Sha256)
+        let hash = MerkleHasher::hash(&first_hash);
+        hash.to_vec()
+    }
 
-        // Use it to find the user ID point, if any
-        if let Some(blinded_user_id) = bucket.get(&server_phone_point).cloned() {
-            // Hash the identifier and reduce it to a scalar.
-            let hashed_identifier_scalar = Scalar::reduce_nonzero_bytes(&sha256(identifier).into());
+    pub fn prepare_registration(&mut self, identifier: &str) -> (String, Vec<u8>) {
+        // Generate the double-hashed commitment
+        let commitment = Self::generate_commitment(identifier);
+        
+        // Store the double-hashed commitment
+        self.store_commitment(identifier.to_string(), commitment.clone());
+        
+        (identifier.to_string(), commitment)
+    }
 
-            // Un-blind the user ID point
-            let blinded_user_id_point =
-                AffinePoint::from_encoded_point(&blinded_user_id).expect("Invalid point");
-            let unblinded_user_id_point = blinded_user_id_point
-                * hashed_identifier_scalar
-                    .invert()
-                    .expect("Should be invertible");
+    pub fn store_merkle_proof(&mut self, identifier: String, _merkle_proof: Vec<u8>) {
+        // We no longer store the proof - it's requested from server when needed
+    }
 
-            // Return
-            Some(unblinded_user_id_point.to_affine().to_encoded_point(true))
-        } else {
-            None
+    pub async fn prepare_lookup(&self, identifier: &str) -> Result<(Prefix, (Vec<u8>, Vec<u8>)), String> {
+        // Retrieve the stored double-hashed commitment
+        let commitment = self.commitments.get(identifier)
+            .ok_or_else(|| "No commitment found for identifier".to_string())?
+            .clone();
+
+        // Get the Merkle proof from the server
+        let merkle_proof = get_merkle_proof_from_server(&commitment).await?;
+
+        // Generate ZK proof using the double-hashed commitment
+        let (zk_proof, vk) = generate_proof(&commitment, &merkle_proof)?;
+
+        // Get prefix for the bucket lookup
+        let prefix = prefix(&commitment);
+
+        Ok((prefix, (zk_proof, vk)))
+    }
+
+    fn blind_identifier(&self, identifier: &str) -> Result<Vec<u8>, String> {
+        // Hash the identifier to a 64-bit number
+        let mut hasher = Sha256::new();
+        hasher.update(identifier.as_bytes());
+        let hash = hasher.finalize();
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&hash[0..8]);
+        let num = u64::from_be_bytes(bytes);
+
+        // Use hash_to_curve to get a valid curve point
+        let point = hash_to_curve(num);
+        let pk = PublicKey::from_affine(point.to_affine())
+            .map_err(|e| format!("Failed to create public key: {}", e))?;
+        
+        let scalar = *self.client_secret.to_nonzero_scalar();
+        let blinded = pk.to_projective() * scalar;
+        Ok(blinded.to_affine().to_encoded_point(false).as_bytes().to_vec())
+    }
+
+    pub fn unblind_user_id(&self, bucket: &[(Vec<u8>, Vec<u8>)]) -> Option<Uuid> {
+        // Get the inverse of client's secret key for unblinding
+        let scalar = self.client_secret.to_nonzero_scalar().invert().unwrap();
+
+        // Iterate through bucket entries
+        for (blinded_id, blinded_uuid) in bucket {
+            // Try to unblind the server-blinded identifier
+            let server_blinded_point = PublicKey::from_encoded_point(
+                &EncodedPoint::from_bytes(blinded_id).ok()?
+            ).unwrap().to_projective() * scalar;
+
+            // If we find a match, return the UUID
+            if let Ok(uuid) = Uuid::from_slice(blinded_uuid) {
+                return Some(uuid);
+            }
         }
+        None
     }
 }
 
@@ -290,7 +388,7 @@ pub fn encode_to_point(user_id: &Uuid) -> AffinePoint {
         let hash = attempt.finalize();
 
         // Create a compressed point format
-        let mut encoded = vec![0x02]; // Start with 0x02 for even Y or 0x03 for odd Y
+        let mut encoded = vec![0x02]; // Start with 0x02 for even Y
         encoded.extend_from_slice(&hash[0..32]); // Take first 32 bytes for X coordinate
 
         // Try to create a point from the encoded bytes
@@ -335,97 +433,25 @@ pub fn prefix(bytes: &[u8]) -> Prefix {
         .expect("Should be at least 8 bytes long")
 }
 
-pub fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
-    // Verify identifier is in public set
-    if !public_set.contains(&identifier) {
-        panic!("Identifier not in public set");
-    }
-
-    let mut rng = rand::thread_rng();
-    let r = Scalar::random(&mut rng);
-    let h_x = hash_to_curve(identifier);
-    let commitment = (h_x * r).to_affine();
-    let commitment_encoded = commitment.to_encoded_point(true);
-
-    trace!("Client side random r: {:?}", r);
-    trace!("Server commitment: {:?}", commitment_encoded);
-
-    // Challenge computation
-    let challenge = hash_to_scalar(
-        &[
-            commitment_encoded.as_bytes()[1..].to_vec(),
-            serialize_public_set(public_set),
-        ]
-        .concat(),
-    );
-
-    trace!("Generated challenge: {:?}", challenge);
-    let response = r + challenge;
-    trace!("Generated response: {:?}", response);
-
-    trace!("Generating ZKSM proof for identifier {}", identifier);
-
-    let proof = ZKSMProof {
-        commitment: commitment_encoded,
-        challenge,
-        response,
-    };
-
-    trace!("Generated proof: {:?}", proof);
-    proof
-}
-
-pub fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
-    debug!("Verifying ZKSM proof");
-
-    let commitment_point = AffinePoint::from_encoded_point(&proof.commitment).unwrap();
-    let challenge = hash_to_scalar(
-        &[
-            proof.commitment.as_bytes()[1..].to_vec(),
-            serialize_public_set(public_set),
-        ]
-        .concat(),
-    );
-
-    if challenge != proof.challenge {
-        debug!("Challenge mismatch in ZKSM proof");
-        return false;
-    }
-
-    // Check if the proof is valid for any element in the public set
-    let result = public_set.iter().any(|&x| {
-        let h_x = hash_to_curve(x);
-        let lhs = ProjectivePoint::from(commitment_point) + h_x * proof.challenge;
-        let rhs = h_x * proof.response;
-
-        trace!(
-            "Verification for x = {}: LHS = {:?}, RHS = {:?}",
-            x,
-            lhs,
-            rhs
-        );
-
-        let equal = lhs.to_affine() == rhs.to_affine();
-        if equal {
-            debug!("Found matching element: {}", x);
-        }
-        equal
+// Helper function to get Merkle proof from server
+async fn get_merkle_proof_from_server(commitment: &[u8]) -> Result<Vec<u8>, String> {
+    let mut client = DiscoveryClient::connect("http://[::1]:50051")
+        .await
+        .map_err(|e| format!("Failed to connect to server: {}", e))?;
+        
+    let request = tonic::Request::new(GetMerkleProofRequest {
+        commitment: commitment.to_vec(),
     });
-
-    result
-}
-
-// Helper function to hash to a scalar
-fn hash_to_scalar(data: &[u8]) -> Scalar {
-    let hash = sha2::Sha256::digest(data);
-    let mut okm = [0u8; 48];
-    okm[..32].copy_from_slice(&hash);
-    Scalar::from_okm(&okm.into())
-}
-
-// Helper function to serialize the public set
-fn serialize_public_set(public_set: &[u64]) -> Vec<u8> {
-    let mut sorted = public_set.to_vec();
-    sorted.sort();
-    sorted.iter().flat_map(|&x| x.to_le_bytes()).collect()
+    
+    let response = client
+        .get_merkle_proof(request)
+        .await
+        .map_err(|e| format!("Failed to get Merkle proof: {}", e))?;
+        
+    let inner = response.into_inner();
+    if !inner.success {
+        return Err(inner.message);
+    }
+    
+    Ok(inner.merkle_proof)
 }

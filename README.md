@@ -63,7 +63,7 @@ The privacy guarantees are:
 
 ## Demo
 
-First set `UUID=$(uuidgen)`.
+First set `UUID=$(uuidgen)` to create a UUID to pair with an identifier.
 
 Then, to start the server, run `cargo run --bin server` in one terminal.
 The server will start with 100 demo identifiers (1000000000 through 1000000099).
@@ -251,7 +251,7 @@ cargo run --bin client -- lookup 1000000001
 
 I was inspired by [How Signal uses ORAMs](https://signal.org/blog/building-faster-oram/)!
 
-The best blog to learn ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! The idea of Zero Knowledge Set Membership comes from [this](https://eprint.iacr.org/2021/1672.pdf) paper paired with the simple Path ORAM coming from [this](https://eprint.iacr.org/2013/280.pdf) paper.
+The best blog to learn ZK was [this](https://blog.cryptographyengineering.com/2014/11/27/zero-knowledge-proofs-illustrated-primer/) ECC that I could find out was [this](https://andrea.corbellini.name/2015/05/17/elliptic-curve-cryptography-a-gentle-introduction/)! The idea of Zero Knowledge Set Membership comes from [this](https://eprint.iacr.org/2019/1255.pdf) paper paired with the simple Path ORAM coming from [this](https://eprint.iacr.org/2013/280.pdf) paper.
 
 ### Path forward
 

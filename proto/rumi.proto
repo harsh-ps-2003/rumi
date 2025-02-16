@@ -3,7 +3,7 @@ package rumi;
 
 // The discovery service definition
 service Discovery {
-    // Get the set of registered identifiers
+    // Get the set of registered identifiers and current Merkle root
     rpc GetPublicSet (GetPublicSetRequest) returns (GetPublicSetResponse);
     
     // Find a user by their identifier
@@ -11,6 +11,9 @@ service Discovery {
     
     // Register a new identifier-UUID pair
     rpc Register(RegisterRequest) returns (RegisterResponse);
+
+    // Get Merkle proof for a commitment
+    rpc GetMerkleProof (GetMerkleProofRequest) returns (GetMerkleProofResponse);
 }
 
 // Request for getting the public set of identifiers
@@ -18,36 +21,49 @@ message GetPublicSetRequest {}
 
 // Response containing the public set of identifiers
 message GetPublicSetResponse {
-    repeated uint64 identifiers = 1;
+    bytes merkle_root = 1;  // Current Merkle root for verification
 }
 
 // Request for finding a user
 message FindRequest {
-    bytes hash_prefix = 1;
-    bytes blinded_identifier = 2;
-    string zksm_proof = 3;
+    bytes hash_prefix = 1;  // Prefix of the blinded identifier
+    bytes zk_proof = 2;  // ZK proof of Merkle path knowledge
+    bytes zk_verification_key = 3;  // Verification key for the ZK proof
 }
 
 // A bucket entry in the response
 message BucketEntry {
-    bytes blinded_identifier = 1;
-    bytes blinded_user_id = 2;
+    bytes double_blinded_identifier = 1;  // Server-blinded identifier
+    bytes blinded_user_id = 2;  // Client-blinded UUID
 }
 
 // Response for finding a user
 message FindResponse {
-    bytes double_blinded_identifier = 1;
-    repeated BucketEntry entries = 2;
+    repeated BucketEntry entries = 1;  // Bucket entries matching the prefix
 }
 
 // Request for registering a new identifier-UUID pair
 message RegisterRequest {
-    uint64 identifier = 1;
-    bytes uuid = 2;
+    string identifier = 1;  // Original identifier
+    bytes uuid = 2;  // UUID to register
+    bytes commitment = 3;  // Commitment to the identifier
 }
 
 // Response for registration
 message RegisterResponse {
-    bool success = 1;
-    string message = 2;
+    bool success = 1;  // Whether registration was successful
+    string message = 2;  // Error message if unsuccessful
+    bytes merkle_proof = 3;  // Merkle proof for the registered identifier
+}
+
+// Request for getting Merkle proof
+message GetMerkleProofRequest {
+    bytes commitment = 1;  // Commitment to get proof for
+}
+
+// Response containing Merkle proof
+message GetMerkleProofResponse {
+    bool success = 1;  // Whether proof generation was successful
+    string message = 2;  // Error message if unsuccessful
+    bytes merkle_proof = 3;  // The Merkle proof
 }
