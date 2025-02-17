@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Assignment not computed",
+            "program": "${workspaceFolder}/target/debug/client",
+            "args": ["lookup", "1000000043"],
+            "cwd": "${workspaceFolder}",
+        }
+    ]
+}
