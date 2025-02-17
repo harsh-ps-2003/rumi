@@ -182,7 +182,8 @@ The registration process isn't a simple "add to list" operation. It's a carefull
 
 This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
 
-Please note that a simplified form of ZKSM is implemented right now (not a full fledged ZK-SNARK or ZK-STARK). It's more of a custom protocol that demonstrates the basic idea of proving set membership with some level of privacy. It's important to understand that this current implementation is not cryptographically secure in a real-world setting.
+*Please note that a simplified form of ZKSM is implemented right now (not a full fledged ZK-SNARK or ZK-STARK). It's more of a custom protocol that demonstrates the basic idea of proving set membership with some level of privacy. It's important to understand that this current implementation is not cryptographically secure in a real-world setting. While the server doesn't learn the exact identifier directly, it does learn that the identifier is somewhere in the registered set. A true zero-knowledge proof should reveal absolutely nothing about the secret, not even its membership in a specific set. The server also learns the commitment, which is related to the identifier.
+The ZKSM protocol is highly simplified and lacks many of the security features of real zk-SNARKs or zk-STARKs. It's vulnerable to various attacks that a production-ready system would need to address.*
 
 ## Architecture
 
