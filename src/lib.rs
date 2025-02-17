@@ -1,4 +1,6 @@
 pub mod oram;
+pub mod actor;
+pub mod messages;
 
 use crate::oram::{Operation, PathORAM};
 use p256::{

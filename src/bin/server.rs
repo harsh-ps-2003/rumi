@@ -11,11 +11,10 @@ use prometheus::{
     GaugeVec, HistogramVec, IntCounterVec, Registry, TextEncoder,
 };
 use reqwest;
-use rumi::Server;
+use rumi::{Server, actor::ServerActor};
 use serde_json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::{debug, info, warn, Level};
 use tracing_attributes::instrument;
@@ -46,7 +45,7 @@ lazy_static! {
         register_gauge_vec!("rumi_memory_bytes", "Memory usage in bytes", &["type"]).unwrap();
 }
 
-// Metrics handler function
+/// Metrics handler function
 fn get_metrics() -> String {
     let encoder = TextEncoder::new();
     let mut buffer = Vec::new();
@@ -54,9 +53,11 @@ fn get_metrics() -> String {
     String::from_utf8(buffer).unwrap()
 }
 
-#[derive(Debug)]
+/// Discovery service implementation
+/// Uses actor model for handling server state
+#[derive(Debug, Clone)]
 pub struct DiscoveryService {
-    server: Arc<Mutex<Server>>,
+    server_handle: rumi::actor::ServerHandle,
 }
 
 impl DiscoveryService {
@@ -65,16 +66,17 @@ impl DiscoveryService {
         let users = HashMap::new(); // Start with empty user set
 
         let server = Server::new(&mut rng, &users);
-        debug!("Server initialized with empty user set",);
+        debug!("Server initialized with empty user set");
 
-        Self {
-            server: Arc::new(Mutex::new(server)),
-        }
+        let server_handle = ServerActor::spawn(server);
+
+        Self { server_handle }
     }
 }
 
 #[tonic::async_trait]
 impl Discovery for DiscoveryService {
+    /// Get the public set of identifiers
     #[instrument(skip(self, _request), name = "get_public_set", ret)]
     async fn get_public_set(
         &self,
@@ -85,19 +87,14 @@ impl Discovery for DiscoveryService {
             .start_timer();
         REQUEST_COUNTER.with_label_values(&["get_public_set"]).inc();
 
-        let result = {
-            let server = self
-                .server
-                .lock()
-                .map_err(|_| Status::internal("Server lock poisoned"))?;
-            let identifiers = server.get_public_set();
-            Ok(Response::new(GetPublicSetResponse { identifiers }))
-        };
+        let identifiers = self.server_handle.get_public_set().await;
+        let result = Ok(Response::new(GetPublicSetResponse { identifiers }));
 
         timer.observe_duration();
         result
     }
 
+    /// Find a user by their identifier
     #[instrument(
         skip(self, request),
         fields(
@@ -109,58 +106,38 @@ impl Discovery for DiscoveryService {
         let timer = REQUEST_DURATION.with_label_values(&["find"]).start_timer();
         REQUEST_COUNTER.with_label_values(&["find"]).inc();
 
-        let result = {
-            let request_inner = request.into_inner();
-            let hash_prefix = request_inner.hash_prefix;
-            let client_blinded_identifier = request_inner.blinded_identifier;
-            let zksm_proof = request_inner.zksm_proof;
+        let request_inner = request.into_inner();
+        let hash_prefix = request_inner.hash_prefix;
+        let client_blinded_identifier = request_inner.blinded_identifier;
+        let zksm_proof = request_inner.zksm_proof;
 
-            let prefix: [u8; 8] = hash_prefix
-                .try_into()
-                .map_err(|_| Status::invalid_argument("Invalid prefix length"))?;
+        let prefix: [u8; 8] = hash_prefix
+            .try_into()
+            .map_err(|_| Status::invalid_argument("Invalid prefix length"))?;
 
-            let mut rng = rand::thread_rng();
+        let result = match self.server_handle.find(prefix, client_blinded_identifier, zksm_proof).await {
+            Some((double_blinded_identifier, entries)) => {
+                let entries = entries
+                    .into_iter()
+                    .map(|(k, v)| rumi_proto::BucketEntry {
+                        blinded_identifier: k,
+                        blinded_user_id: v,
+                    })
+                    .collect();
 
-            // Get mutable lock once and keep it for the duration
-            let mut server = self
-                .server
-                .lock()
-                .map_err(|_| Status::internal("Server lock poisoned"))?;
-
-            let client_blinded_point =
-                p256::EncodedPoint::from_bytes(&client_blinded_identifier)
-                    .map_err(|_| Status::invalid_argument("Invalid blinded identifier"))?;
-
-            let double_blinded_point = server.blind_identifier(&client_blinded_point);
-
-            match server.find_bucket(
-                prefix,
-                &serde_json::from_str(&zksm_proof)
-                    .map_err(|_| Status::invalid_argument("Invalid ZKSM proof"))?,
-                &mut rng,
-            ) {
-                Some(bucket) => {
-                    let entries = bucket
-                        .into_iter()
-                        .map(|(k, v)| rumi_proto::BucketEntry {
-                            blinded_identifier: k.as_bytes().to_vec(),
-                            blinded_user_id: v.as_bytes().to_vec(),
-                        })
-                        .collect();
-
-                    Ok(Response::new(FindResponse {
-                        double_blinded_identifier: double_blinded_point.as_bytes().to_vec(),
-                        entries,
-                    }))
-                }
-                None => Err(Status::permission_denied("Invalid ZKSM proof")),
+                Ok(Response::new(FindResponse {
+                    double_blinded_identifier,
+                    entries,
+                }))
             }
+            None => Err(Status::permission_denied("Invalid ZKSM proof")),
         };
 
         timer.observe_duration();
         result
     }
 
+    /// Register a new user
     #[instrument(skip(self, request), name = "register", ret)]
     async fn register(
         &self,
@@ -171,30 +148,22 @@ impl Discovery for DiscoveryService {
             .start_timer();
         REQUEST_COUNTER.with_label_values(&["register"]).inc();
 
-        let result = {
-            let request_inner = request.into_inner();
-            let identifier = request_inner.identifier;
-            let uuid_bytes = request_inner.uuid;
+        let request_inner = request.into_inner();
+        let identifier = request_inner.identifier;
+        let uuid_bytes = request_inner.uuid;
 
-            let uuid = Uuid::from_slice(&uuid_bytes)
-                .map_err(|_| Status::invalid_argument("Invalid UUID format"))?;
+        let uuid = Uuid::from_slice(&uuid_bytes)
+            .map_err(|_| Status::invalid_argument("Invalid UUID format"))?;
 
-            let mut rng = rand::thread_rng();
-            let mut server = self
-                .server
-                .lock()
-                .map_err(|_| Status::internal("Server lock poisoned"))?;
-
-            match server.register(identifier, &uuid, &mut rng) {
-                Ok(()) => Ok(Response::new(RegisterResponse {
-                    success: true,
-                    message: format!("Successfully registered identifier {}", identifier),
-                })),
-                Err(e) => Ok(Response::new(RegisterResponse {
-                    success: false,
-                    message: e.to_string(),
-                })),
-            }
+        let result = match self.server_handle.register(identifier, uuid).await {
+            Ok(()) => Ok(Response::new(RegisterResponse {
+                success: true,
+                message: format!("Successfully registered identifier {}", identifier),
+            })),
+            Err(e) => Ok(Response::new(RegisterResponse {
+                success: false,
+                message: e.to_string(),
+            })),
         };
 
         timer.observe_duration();
@@ -202,6 +171,7 @@ impl Discovery for DiscoveryService {
     }
 }
 
+/// Main function to start the server
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up logging based on RUST_LOG env var, defaulting to info level
@@ -241,30 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .set(rand::random::<f64>() * 1000.0);
 
             let metrics = get_metrics();
-            match client
-                .post("http://localhost:9091/metrics/job/rumi") // Simplified endpoint
-                .header("Content-Type", "text/plain")
-                .body(metrics)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        warn!(
-                            "Failed to push metrics: HTTP {} - Body: {}",
-                            response.status(),
-                            response.text().await.unwrap_or_default()
-                        );
-                    } else {
-                        debug!("Successfully pushed metrics");
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to push metrics: {}", e);
-                }
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     });
 

@@ -1,3 +1,7 @@
+pub mod rumi_proto {
+    tonic::include_proto!("rumi");
+}
+
 use clap::Parser;
 use console::style;
 use rumi::Client;
@@ -13,10 +17,6 @@ use tracing::{debug, info, trace, warn, Level};
 use tracing_attributes::instrument;
 use tracing_subscriber::{fmt, prelude::*};
 use uuid::Uuid;
-
-pub mod rumi_proto {
-    tonic::include_proto!("rumi");
-}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -39,6 +39,7 @@ enum Commands {
     },
 }
 
+/// Lookup an identifier in the system
 #[instrument(skip(client, rumi_client), fields(identifier = %identifier), ret)]
 async fn lookup_identifier(
     client: &mut DiscoveryClient<tonic::transport::Channel>,
@@ -126,6 +127,7 @@ async fn lookup_identifier(
     Ok(())
 }
 
+/// Register an identifier in the system
 #[instrument(skip(client), fields(identifier = %identifier), ret)]
 async fn register_identifier(
     client: &mut DiscoveryClient<tonic::transport::Channel>,
@@ -178,6 +180,7 @@ async fn register_identifier(
     Ok(())
 }
 
+/// Main function to start the client
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Set up logging based on RUST_LOG env var, defaulting to info level
