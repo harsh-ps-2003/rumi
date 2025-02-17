@@ -21,7 +21,7 @@ pub enum Operation {
     Write,
 }
 
-// Represents a block of data in the ORAM
+/// Represents a block of data in the ORAM
 // Zeroize and ZeroizeOnDrop ensure secure deletion of sensitive data
 #[derive(Serialize, Deserialize, Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ORAMBlock {
@@ -29,7 +29,7 @@ pub struct ORAMBlock {
     data: Vec<u8>, // The actual data stored in the block
 }
 
-// The main Path ORAM structure
+/// The main Path ORAM structure
 #[derive(Debug)]
 pub struct PathORAM {
     // The binary tree structure. Each node is a bucket that can hold up to BUCKET_SIZE blocks
@@ -41,7 +41,7 @@ pub struct PathORAM {
 }
 
 impl PathORAM {
-    // Initialize a new Path ORAM structure
+    /// Initialize a new Path ORAM structure
     pub fn new() -> Self {
         // Create a binary tree with empty buckets
         let tree = vec![vec![None; BUCKET_SIZE]; (1 << (ORAM_DEPTH + 1)) - 1];
@@ -52,7 +52,7 @@ impl PathORAM {
         }
     }
 
-    // Main access function for reading or writing data
+    /// Main access function for reading or writing data
     #[instrument(skip(self, rng), fields(id = %id, operation = ?op), ret)]
     pub fn access(
         &mut self,
@@ -119,7 +119,7 @@ impl PathORAM {
         result
     }
 
-    // Read all blocks along a specific path in the tree
+    /// Read all blocks along a specific path in the tree
     #[instrument(skip(self), fields(leaf = %leaf), ret)]
     fn read_path(&mut self, leaf: usize) -> Vec<ORAMBlock> {
         let mut path = Vec::new();
@@ -134,7 +134,7 @@ impl PathORAM {
         path
     }
 
-    // Write blocks from the stash back to the tree along a specific path
+    /// Write blocks from the stash back to the tree along a specific path
     #[instrument(skip(self), fields(leaf = %leaf), ret)]
     fn write_path(&mut self, leaf: usize) {
         let mut node = leaf + (1 << ORAM_DEPTH) - 1;
@@ -147,7 +147,7 @@ impl PathORAM {
         self.write_bucket(0);
     }
 
-    // Write blocks to a specific bucket (node) in the tree
+    /// Write blocks to a specific bucket (node) in the tree
     fn write_bucket(&mut self, node: usize) {
         let path_to_root = self.path_to_root(node);
         let mut bucket = Vec::new();
@@ -169,7 +169,7 @@ impl PathORAM {
         self.tree[node] = bucket;
     }
 
-    // Calculate the path from a given node to the root
+    /// Calculate the path from a given node to the root
     fn path_to_root(&self, mut node: usize) -> Vec<usize> {
         let mut path = vec![node];
         while node > 0 {
@@ -179,7 +179,7 @@ impl PathORAM {
         path
     }
 
-    // Securely delete the ORAM structure
+    /// Securely delete the ORAM structure
     pub fn secure_delete(&mut self) {
         for bucket in self.tree.iter_mut() {
             for block in bucket.iter_mut() {
@@ -198,7 +198,7 @@ impl PathORAM {
         self.position_map.keys().cloned().collect()
     }
 
-    // Helper function to check if a block exists
+    /// Helper function to check if a block exists
     pub fn contains(&self, id: u64) -> bool {
         if self.position_map.contains_key(&id) {
             return true;
@@ -221,19 +221,22 @@ impl PathORAM {
         false
     }
 
-    // Helper methods for benchmarking
+    /// Helper methods for benchmarking
     pub fn get_tree_height(&self) -> usize {
         ORAM_DEPTH
     }
 
+    /// Get the size of the position map
     pub fn get_position_map_size(&self) -> usize {
         self.position_map.len()
     }
 
+    /// Get the size of the stash
     pub fn get_stash_size(&self) -> usize {
         self.stash.len()
     }
 
+    /// Get the total number of blocks in the ORAM
     pub fn get_total_blocks(&self) -> usize {
         let mut total = 0;
         for bucket in &self.tree {

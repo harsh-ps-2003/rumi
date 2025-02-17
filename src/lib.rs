@@ -336,6 +336,7 @@ pub fn prefix(bytes: &[u8]) -> Prefix {
         .expect("Should be at least 8 bytes long")
 }
 
+/// Generates a ZKSM proof for a given identifier
 pub fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     // Verify identifier is in public set
     if !public_set.contains(&identifier) {
@@ -376,6 +377,7 @@ pub fn generate_zksm_proof(identifier: u64, public_set: &[u64]) -> ZKSMProof {
     proof
 }
 
+/// Verifies a ZKSM proof
 pub fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     debug!("Verifying ZKSM proof");
 
@@ -416,7 +418,7 @@ pub fn verify_zksm_proof(public_set: &[u64], proof: &ZKSMProof) -> bool {
     result
 }
 
-// Helper function to hash to a scalar
+/// Helper function to hash to a scalar
 fn hash_to_scalar(data: &[u8]) -> Scalar {
     let hash = sha2::Sha256::digest(data);
     let mut okm = [0u8; 48];
@@ -424,7 +426,7 @@ fn hash_to_scalar(data: &[u8]) -> Scalar {
     Scalar::from_okm(&okm.into())
 }
 
-// Helper function to serialize the public set
+/// Helper function to serialize the public set
 fn serialize_public_set(public_set: &[u64]) -> Vec<u8> {
     let mut sorted = public_set.to_vec();
     sorted.sort();

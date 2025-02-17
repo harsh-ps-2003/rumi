@@ -182,6 +182,8 @@ The registration process isn't a simple "add to list" operation. It's a carefull
 
 This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
 
+Please note that a simplified form of ZKSM is implemented right now (not a full fledged ZK-SNARK or ZK-STARK). It's more of a custom protocol that demonstrates the basic idea of proving set membership with some level of privacy. It's important to understand that this current implementation is not cryptographically secure in a real-world setting.
+
 ## Architecture
 
 RUMI consists of two main stacks:
@@ -338,7 +340,6 @@ Also, `tokio-console` can be used for more performance monitoring.
 
 ## Disclaimer
 
-The Identifiers-UUID are hardcoded as it's a toy implementation.
 Not designed to be used in production!
 
 This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur.
