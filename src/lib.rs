@@ -155,7 +155,7 @@ impl Server {
             .to_encoded_point(true)
     }
 
-    // get public key set from ORAM
+    /// get public key set from ORAM
     pub fn get_public_set(&self) -> Vec<u64> {
         let mut public_set = self.oram.get_all_identifiers();
         public_set.sort();

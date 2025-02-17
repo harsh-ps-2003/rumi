@@ -2,6 +2,45 @@
 
 A privacy-preserving discovery service design for mapping distinct identifiers to IDs without revealing any information to the server!
 
+## Use cases 
+
+Imagine you download a typical messaging app. To find your friends, it usually asks for access to your entire contact list. You grant it permission (because you want to find your friends!), and the app uploads all your contacts' phone numbers (or sometimes even more data) to its servers. Here's why this is problematic:
+
+* Privacy Loss: The app now has a copy of all your contacts, even those who aren't using the app. This is a huge privacy risk. The app company could use this data for advertising, sell it to third parties, or it could be compromised in a data breach.
+
+* Lack of Control: You have little control over what happens to your contacts' data once it's on the app's servers.
+
+* Potential for Abuse: Even if the app company is well-intentioned, the data could be misused. Imagine a rogue employee accessing your contact list, or a government demanding access to the data.
+
+The motivating solution - Imagine a new messaging app. Users want to find their existing contacts who are also on the app, without revealing their entire contact list to the service. Basically a [Private Set Intersection](https://en.wikipedia.org/wiki/Private_set_intersection)!
+
+The phone number is the public identifier, while the UUID is private to the app. The user's contact list is private and remains on the phone. The app only processes individual contacts from this list one at a time, locally, preventing the server from ever seeing the complete list.
+
+This system allows the client to check for matches in the server's database without the server ever learning the client's contact list or the UUIDs of those contacts. The client only learns the UUIDs of contacts that are present in the server's database, and only if the client already knows the corresponding phone number. This achieves the desired privacy-preserving contact discovery.
+
+Why not just hash the entire contact list and send it to the server?
+
+> This is what many apps used to do (and some still do). It's incredibly insecure. The server gets a complete list of hashed phone numbers, which can be attacked using rainbow tables or brute-force methods.
+
+Why not just send the hashed phone number to the server for each lookup?
+
+> This is better than sending the whole list, but it still leaks information. The server can build a profile of which phone numbers a user is interested in.
+
+## Demo
+
+First set `UUID=$(uuidgen)` to create a random UUID.
+
+Then, to start the server, run `cargo run --bin server` in one terminal.
+The server will start with 100 demo identifiers (1000000000 through 1000000099).
+Register the identifier you want to lookup later using `cargo run --bin client register 1000000042 $UUID` Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
+
+The registration process isn't a simple "add to list" operation. It's a carefully designed cryptographic protocol that ensures:
+The server never learns the cleartext phone number.
+The server never learns the cleartext UUID.
+The server cannot link a phone number to its corresponding UUID without the client's cooperation (specifically, without the client's secret).
+The server's access patterns are hidden by ORAM.
+This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
+
 ## Protocol Flow
 
 ```mermaid
@@ -61,14 +100,6 @@ The privacy guarantees are:
 * Whether queries succeeded (due to fixed-size responses)
 * Database contents or size
 
-## Demo
-
-First set `UUID=$(uuidgen)`.
-
-Then, to start the server, run `cargo run --bin server` in one terminal.
-The server will start with 100 demo identifiers (1000000000 through 1000000099).
-Register the identifier you want to lookup later using `cargo run --bin client register 1000000042 $UUID` Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
-
 ## How it works?
 
 Cryptography used :
@@ -77,60 +108,78 @@ Cryptography used :
 2. Path ORAM (Oblivious RAM): Implemented to obscure access patterns and enhance privacy.
 3. Zero-Knowledge Set Membership (ZKSM) Proofs: Ensures that clients can prove they're querying valid identifiers without revealing which ones.
 
-*Client generates blinded requests, server manages the ORAM structure and processes client requests without learning the actual identifiers.*
+User Story :
 
-The client has a list of identifiers corresponding to their IDs. Both client and server have their own secret keys. The client stores its data in an Path ORAM as a privacy layer. The server wants to look up a ID for specific identifier, so it blinds the identifier using its secret key and also creates a proof to show that its asking for a valid identifier without revealing which one. The client recieves the blinded identifier and proof and ensures the request is valid. It further blinds the identifier with its own secret key, then searches ORAM for matching data and sends the double-blinded data with set of potential matches. The server removes its blinding, and searches for client blinded identifier in set of matches.
+As Alice, a new user of the "SecureChat" messaging app, I want to see which of my phone contacts are also using SecureChat, so that I can easily connect and chat with them within the app, without revealing my entire contact list or any individual contact's phone number to the SecureChat server.
 
-1. Client Preparation:
-   * Client generates a random secret scalar for blinding operations.
-   * Client receives the public set of identifiers from the server.
+Scenario: Alice Connects and Finds Bob
 
-2. Client Request Generation:
-   * Client hashes the identifier to a point on the elliptic curve.
-   * Client blinds this point using their secret scalar (client-blinded identifier point).
-   * Client generates a ZKSM proof to prove the identifier is in the public set without revealing which one.
-   * Client computes the N-bit prefix of the hashed identifier.
+Pre-requisite: Bob Registers with SecureChat (This Happens Before Alice's Lookup)
 
-3. Client Request Transmission:
-   * Client sends to the Server:
-     a) The N-bit prefix of the hashed identifier
-     b) The client-blinded identifier point
-     c) The ZKSM proof
+Bob's Phone (Client-Side):
+* Generates a random secret key - `bob_secret_key` (a scalar).
+* Hashes his phone number - `hashed_bob_number`.
+* Converts the hashed phone number to an elliptic curve point: `bob_phone_point`
+* Blinds the point: `blinded_bob_number` = `bob_phone_point` * `bob_secret_key`.
+* Generates a UUID for himself within SecureChat- `UUID_BOB`.
+* Encodes the UUID to a point on curve - `encoded_uuid_bob`
+* Generates a ZKSM proof `zksm_proof_bob` to prove that `hashed_bob_number` is in the set of all registered, hashed phone numbers. Remember, the "public set" (let's call it S) is the conceptual set of all hashed phone numbers of users who have registered with SecureChat. It's not a literal list sent to the client, but it represents the information that could be derived from the server's database.
+`S = {hash(phone_1), hash(phone_2), hash(phone_3), ...}` where `phone_1`, `phone_2`, etc., are the phone numbers of all registered users.
+* Calculates the N-bit prefix of the hashed phone number: `prefix_bob`.
+* Sends `blinded_bob_number`, `encoded_uuid_bob`, `zksm_proof_bob`, and `prefix_bob` to the server.
 
-4. Server Processing:
-   * Server verifies the ZKSM proof to ensure the identifier is in the public set.
-   * If verification fails, the server rejects the request.
-   * If verification succeeds, the server proceeds with the following steps:
-     a) Server blinds the client-blinded identifier point with its own secret scalar, creating a double-blinded identifier point.
-     b) Server uses the N-bit prefix to locate the corresponding ORAM path.
-     c) Server reads the ORAM path, retrieving all blocks along this path.
-     d) Server performs a fixed number of additional random ORAM accesses to obscure the actual number of matches.
+SecureChat Server:
+* Receives `blinded_bob_number`, `encoded_uuid_bob`, `zksm_proof_bob`, and `prefix_bob`.
+* Verifies `zksm_proof_bob`. If invalid, rejects the registration.
+* Generates a random secret key - `server_secret_key` (a scalar).
+* Double-blinds Bob's number - `double_blinded_bob_number` = `blinded_bob_number` * `server_secret_key`.
+* Blinds Bob's UUID - `blinded_uuid_bob`
+* Stores (`double_blinded_bob_number`, `blinded_uuid_bob`) in the ORAM, using `prefix_bob` to determine the initial bucket.
 
-5. Server Response:
-   * Server returns to the client:
-     a) The double-blinded identifier point
-     b) A map of server-blinded identifier points to corresponding blinded user ID points from the retrieved ORAM blocks
+Alice's Contact Discovery (After Bob's Registration)
+Alice's Phone (Client-Side):
 
-6. Client Processing:
-   * Client unblinds the double-blinded identifier point using the inverse of their secret scalar.
-   * Client searches for the unblinded point in the returned map.
-   * If a match is found, the client retrieves the corresponding blinded user ID point.
-   * Client unblinds the user ID point using the inverse of the hashed identifier scalar.
+* Alice installs SecureChat and grants access to her contacts.
+* Alice's phone generates a random secret key - `alice_secret_key` (a scalar).
+* Alice wants to find Bob. Alice's phone retrieves Bob's phone number `bob_phone_number` from her contact list.
+* Hashes Bob's phone number - `hashed_bob_number`. This is the same hash Bob's phone calculated.
+* Converts the hash to an elliptic curve point - `bob_phone_point`.
+* Blinds the point using her secret key - `blinded_bob_number_alice` = `bob_phone_point` * `alice_secret_key`.
+* Generates a ZKSM proof `zksm_proof_alice` to prove that hashed_bob_number is in the set of all registered, hashed phone numbers.
+* Calculates the N-bit prefix of the hashed phone number - `prefix_bob`. This is the same prefix Bob's phone calculated.
+* Sends `blinded_bob_number_alice`, `zksm_proof_alice`, and `prefix_bob` to the server.
 
-7. Final Result:
-   * If a match was found and successfully unblinded, the client now has the unblinded user ID point.
-   * This point can be decoded to retrieve the actual UUID.
+Again, SecureChat Server:
 
-8. ORAM Updates:
-   * After each access, the server updates the ORAM structure:
+* Receives `blinded_bob_number_alice`, `zksm_proof_alice`, and `prefix_bob`.
+Verifies zksm_proof_alice. If invalid, rejects the request.
+* Uses `prefix_bob` to locate the relevant bucket in its ORAM.
+* Retrieves all entries from that bucket. Each entry is a tuple: (`double_blinded_phone_number`, `blinded_uuid`).
+* Blinds Alice's blinded number with its own secret key - `double_blinded_bob_number_alice` = `blinded_bob_number_alice` * `server_secret_key`.
+* Sends all retrieved entries (the `double_blinded_phone_number`, `blinded_uuid` pairs) and `double_blinded_bob_number_alice` back to Alice's phone.
 
-     a) Generates a new random path for the accessed block.
-     b) Writes back all retrieved blocks along this new path.   
-     c) Updates its position map to reflect the new location of the block.
+Alice's Phone (Client-Side - Matching):
+* Receives the bucket entries and `double_blinded_bob_number_alice` from the server.
+* Unblinds `double_blinded_bob_number_alice` using her secret key:
+`server_blinded_bob_number` = `double_blinded_bob_number_alice` * `alice_secret_key^-1` = `(hash_to_curve(sha256(bob_phone_number))` * `alice_secret_key` * `server_secret_key` * `alice_secret_key^-1` = `hash_to_curve(sha256(bob_phone_number))` * `server_secret_key`.
+* Iterates through the received bucket entries:
+For each entry (double_blinded_phone_number, blinded_uuid):
+Attempts to unblind `double_blinded_phone_number` using her secret key - `potential_server_blinded` = `double_blinded_phone_number` * `alice_secret_key^-1`.
+* Checks if `potential_server_blinded` is equal to `server_blinded_bob_number`.
+* If they are equal, a match is found! This is because:
+`potential_server_blinded` = `double_blinded_phone_number` * `alice_secret_key^-1`
+will only equal
+`server_blinded_bob_number` = `hash_to_curve(sha256(bob_phone_number))` * `server_secret_key`
+if `double_blinded_phone_number` was originally created using the same `hashed_bob_number`.
 
-The benefit of this approach is that the server only learns about the association between the identifiers when the client explicitly requests it, and even then, the server doesn't learn which specific identifier was requested. The ORAM structure and fixed-size operations obscure access patterns, while the blinding process ensures that the identifiers are obscured before transmission to the server. The ZKSM proof adds an extra layer of security by proving set membership without revealing the specific element.
+If a match is found (let's say the matching entry is (`double_blinded_bob_number`, `blinded_uuid_bob`)):
+* Retrieves `blinded_uuid_bob` from the matching entry.
+* Unblinds `blinded_uuid_bob` using `server_blinded_bob_number`:
+`unblinded_uuid` = `blinded_uuid_bob` * `server_blinded_bob_number^-1` = `(encode_to_point(UUID_BOB)` * `server_secret_key` * `hash_to_curve(sha256(bob_phone_number))` * `(hash_to_curve(sha256(bob_phone_number))` * `server_secret_key^-1` = `encode_to_point(UUID_BOB)`.
+* Decodes the UUID - `retrieved_uuid` = `decode_from_point(unblinded_uuid)`.
+*Now, `retrieved_uuid` should be equal to `UUID_BOB`.
 
-This enhances the privacy and confidentiality of the client's data and prevents the server from having unrestricted access to sensitive information. The client can only refer to an identifier when they know it, preventing offline guessing attacks. While the server retains some information (N-bit prefixes and blinded points), it cannot directly link this data to the original identifiers without the client's secret key.
+Result: Alice's app now knows that Bob is on SecureChat and has his internal app ID (UUID_BOB). Alice can now initiate a chat with Bob within the app, using UUID_BOB for all further interactions.
 
 ## Architecture
 
@@ -260,7 +309,7 @@ Current ORAM Usage prevents access pattern leakage, hides which identifiers are 
 * Add a in-memory persistence layer
 * Add support for Private Information Retrieval (PIR) to further reduce server knowledge. Think about IT-PIR (if distributed servers are involved), cPIR (using Homomorphic encryptions but huge computational overhead). Try tinkering with Hybrid PIR-ORAM scheme referenced in [this](https://arxiv.org/pdf/1904.05452) paper for further security-performance tradeoff. Use of PIR has significant performance tradeoffs! Distributed PIR bestows us stronger security and horizontal scalability. Though PIR may leak DB size.
 * Tinker with a Cuckoo hashing scheme proposed by [this](https://eprint.iacr.org/2020/997.pdf) paper to improve efficiency and reduce the need for large buckets and store blocks more efficiently in the Simple Path ORAM! Though not sure about its security bottlenecks!
-* Implement a secure update mechanism using ZKPs.
+* Introduce SMPC protocol to involve more parties!
 * Explore Ring Signatures as its more efficient than ZKSM for larger sets (proof size grows linearly with set size though) while providing stronger anonymity!
 * Goals:
    - Write: <15μs (17% improvement)
