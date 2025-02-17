@@ -98,7 +98,7 @@ async fn lookup_identifier(
             // Convert BucketEntry to the format expected by unblind_user_id
             let converted_entries: Vec<(Vec<u8>, Vec<u8>)> = entries
                 .into_iter()
-                .map(|entry| (entry.double_blinded_identifier, entry.blinded_user_id))
+                .map(|entry| (entry.blinded_identifier, entry.blinded_uuid))
                 .collect();
 
             // Try to find and unblind the matching UUID
@@ -153,10 +153,10 @@ async fn register_identifier(
         style(uuid).yellow()
     );
 
-    let (id, commitment) = rumi_client.prepare_registration(&identifier.to_string());
+    let (blinded_id, commitment) = rumi_client.prepare_registration(&identifier.to_string());
 
     let request = tonic::Request::new(RegisterRequest {
-        identifier: id,
+        blinded_identifier: blinded_id,
         uuid: uuid.as_bytes().to_vec(),
         commitment,
     });
@@ -174,8 +174,10 @@ async fn register_identifier(
                 if response.merkle_proof.is_empty() {
                     warn!("Received empty Merkle proof from server");
                 } else {
-                    rumi_client.store_merkle_proof(identifier.to_string(), response.merkle_proof);
-                    debug!("Stored Merkle proof for identifier {}", identifier);
+                    match rumi_client.store_merkle_proof(identifier.to_string(), response.merkle_proof).await {
+                        Ok(_) => debug!("Stored Merkle proof for identifier {}", identifier),
+                        Err(e) => warn!("Failed to store Merkle proof: {}", e),
+                    }
                 }
             } else {
                 info!(

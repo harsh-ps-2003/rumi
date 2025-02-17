@@ -7,9 +7,9 @@ pub mod rumi {
 }
 
 use crate::{
-    merkle::{MerkleState, generate_proof, verify_merkle_proof},
-    oram::{Operation, PathORAM},
-    rumi::{discovery_client::DiscoveryClient, GetMerkleProofRequest},
+    merkle::{MerkleState, generate_proof, verify_set_membership_proof},
+    oram::{Operation, PathORAM, ORAM_DEPTH, get_prefix},
+    rumi::{discovery_client::DiscoveryClient, GetMerkleProofRequest, GetMerkleRootRequest},
 };
 use rs_merkle::{
     Hasher, MerkleTree, MerkleProof,
@@ -67,9 +67,8 @@ impl std::fmt::Debug for Server {
 }
 
 pub struct Server {
-    blinding_key: SecretKey,
     merkle_state: MerkleState,
-    storage: HashMap<[u8; 8], Vec<(Vec<u8>, Vec<u8>)>>, // prefix -> [(blinded_id, blinded_uuid)]
+    oram: PathORAM,
 }
 
 impl std::fmt::Debug for Client {
@@ -82,49 +81,47 @@ impl std::fmt::Debug for Client {
 
 pub struct Client {
     client_secret: SecretKey,
-    commitments: HashMap<String, Vec<u8>>, // identifier -> commitment
+    blinding_key: SecretKey,  // For double blinding
+    commitments: HashMap<String, Vec<u8>>,
     storage_path: PathBuf,
 }
 
 impl Server {
-    /// Create new server with a random secret and the given book of identifier and userID
     pub fn new<R: RngCore + CryptoRng>(rng: &mut R, users: &HashMap<String, Uuid>) -> Self {
-        let blinding_key = SecretKey::random(rng);
         let mut merkle_state = MerkleState::new();
-        let mut storage = HashMap::new();
+        let mut oram = PathORAM::new();
 
         // Initialize storage with existing users if any
         for (identifier, uuid) in users {
-            // Create double-hashed commitment for existing users
+            // Create commitment for existing users
             let commitment = Self::create_commitment(identifier);
             
             // Add commitment to Merkle tree
             if let Ok(_) = merkle_state.add_leaf(&commitment) {
-                // Only add to storage if Merkle tree addition succeeds
-                if let Ok(blinded_id) = Self::blind_identifier_str(&blinding_key, identifier) {
-                    let prefix = Self::get_prefix(&blinded_id);
-                    let entry = storage.entry(prefix).or_insert_with(Vec::new);
-                    entry.push((blinded_id, uuid.as_bytes().to_vec()));
-                }
+                // Only add to ORAM if Merkle tree addition succeeds
+                let prefix = get_prefix(&commitment);
+                let block = ORAMBlock {
+                    blinded_identifier: commitment.clone(),  // Use commitment as blinded ID for existing users
+                    blinded_user_id: uuid.as_bytes().to_vec(),
+                };
+                oram.access(Operation::Write, prefix, Some(block), rng);
             }
         }
 
         Self {
-            blinding_key,
             merkle_state,
-            storage,
+            oram,
         }
     }
 
-    /// Retrieves a hashmap of blinded identifier points and corresponding user ID points based on a given hash prefix
     pub fn find_bucket(
         &self,
         prefix: [u8; 8],
         proof_data: &(Vec<u8>, Vec<u8>), // (proof_bytes, vk_bytes)
-        _rng: &mut impl RngCore,
+        rng: &mut impl RngCore,
     ) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        // Extract commitment and verify ZK proof of Merkle path knowledge
-        let verified = verify_merkle_proof(
+        // Extract commitment and verify Schnorr-like proof
+        let verified = verify_set_membership_proof(
             &proof_data.0, // proof bytes
             &proof_data.1, // verification key bytes
             self.merkle_state.root(),
@@ -134,90 +131,45 @@ impl Server {
             return None;
         }
         
-        // Return the bucket if proof verifies
-        self.storage.get(&prefix).cloned()
-    }
-
-    /// Attempts to reverse the blinding of a user ID point to recover and return the original UUID
-    pub fn unblind_user_id(&self, blinded_user_id: &EncodedPoint) -> Option<Uuid> {
-        let blinded_user_id_point =
-            AffinePoint::from_encoded_point(blinded_user_id).expect("Invalid point");
-        let scalar = *self.blinding_key.to_nonzero_scalar();
-        let user_id_point = (blinded_user_id_point * scalar)
-            .to_affine()
-            .to_encoded_point(true);
-            
-        Uuid::from_slice(&user_id_point.as_bytes()[1..17]).ok()
-    }
-
-    /// Given a client-blinded identifier point, return a double-blinded identifier point
-    pub fn blind_identifier(&self, point: &EncodedPoint) -> Vec<u8> {
-        let pk = PublicKey::from_encoded_point(point).unwrap();
-        let scalar = *self.blinding_key.to_nonzero_scalar();
-        let blinded = pk.to_projective() * scalar;
-        blinded.to_affine().to_encoded_point(false).as_bytes().to_vec()
-    }
-
-    // get public key set from ORAM
-    pub fn get_public_set(&self) -> Vec<String> {
-        // Return empty set as we no longer expose public identifiers
-        Vec::new()
+        // Read from ORAM
+        let blocks = self.oram.access(Operation::Read, prefix, None, rng)?;
+        
+        // Convert ORAMBlocks to the expected format
+        Some(blocks.into_iter()
+            .map(|block| (block.blinded_identifier, block.blinded_user_id))
+            .collect())
     }
 
     pub fn register(
         &mut self,
-        identifier: String,
+        blinded_id: Vec<u8>,
         commitment: Vec<u8>,
         uuid: &Uuid,
-        _rng: &mut impl RngCore,
+        rng: &mut impl RngCore,
     ) -> Result<Vec<u8>, String> {
-        // The commitment is already double-hashed by the client
-        // Verify that it matches what we expect
-        let expected_commitment = Self::create_commitment(&identifier);
-        if commitment != expected_commitment {
-            return Err("Invalid commitment".to_string());
+        // Verify the commitment format
+        if commitment.len() != 32 {
+            return Err("Invalid commitment format".to_string());
         }
         
-        // Blind the identifier
-        let blinded_id = Self::blind_identifier_str(&self.blinding_key, &identifier)?;
+        // Get prefix from commitment
+        let prefix = get_prefix(&commitment);
         
-        // Store the blinded identifier and UUID
-        let prefix = Self::get_prefix(&blinded_id);
-        let entry = self.storage.entry(prefix).or_insert_with(Vec::new);
-        entry.push((blinded_id, uuid.as_bytes().to_vec()));
+        // Create ORAM block
+        let block = ORAMBlock {
+            blinded_identifier: blinded_id,
+            blinded_user_id: uuid.as_bytes().to_vec(),
+        };
+        
+        // Store in ORAM
+        self.oram.access(Operation::Write, prefix, Some(block), rng);
 
         // Add commitment to Merkle tree and get proof
-        // The commitment is already double-hashed, so we don't hash it again
         let merkle_proof = self.merkle_state.add_leaf(&commitment)
             .map_err(|e| format!("Failed to create Merkle proof: {}", e))?;
             
         debug!("Generated Merkle proof of length {}", merkle_proof.len());
         Ok(merkle_proof)
-    }
-
-    fn blind_identifier_str(key: &SecretKey, identifier: &str) -> Result<Vec<u8>, String> {
-        // Hash the identifier to a 64-bit number first
-        let mut hasher = Sha256::new();
-        hasher.update(identifier.as_bytes());
-        let hash = hasher.finalize();
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&hash[0..8]);
-        let num = u64::from_be_bytes(bytes);
-
-        // Use hash_to_curve to get a valid curve point
-        let point = hash_to_curve(num);
-        let pk = PublicKey::from_affine(point.to_affine())
-            .map_err(|e| format!("Failed to create public key: {}", e))?;
-
-        let scalar = *key.to_nonzero_scalar();
-        let blinded = pk.to_projective() * scalar;
-        Ok(blinded.to_affine().to_encoded_point(false).as_bytes().to_vec())
-    }
-
-    fn get_prefix(blinded_id: &[u8]) -> [u8; 8] {
-        let mut prefix = [0u8; 8];
-        prefix.copy_from_slice(&blinded_id[..8]);
-        prefix
     }
 
     pub fn get_merkle_root(&self) -> [u8; 32] {
@@ -228,21 +180,19 @@ impl Server {
         self.merkle_state.generate_proof(commitment)
     }
 
-    /// Create a double-hashed commitment from an identifier
+    /// Create a commitment from an identifier
     fn create_commitment(identifier: &str) -> Vec<u8> {
-        // First hash using SHA256
+        // Hash using SHA256
         let mut hasher = Sha256::new();
         hasher.update(identifier.as_bytes());
-        let first_hash = hasher.finalize();
+        let hash = hasher.finalize();
         
-        // Second hash using MerkleHasher (rs_merkle::algorithms::Sha256)
-        let hash = MerkleHasher::hash(&first_hash);
-        hash.to_vec()
+        // Second hash using MerkleHasher
+        MerkleHasher::hash(&hash).to_vec()
     }
 }
 
 impl Client {
-    /// Create a new client using a random secret.
     pub fn new(mut rng: impl CryptoRng + RngCore) -> Self {
         // Create storage directory if it doesn't exist
         let storage_path = dirs::home_dir()
@@ -270,6 +220,7 @@ impl Client {
 
         Self {
             client_secret: SecretKey::random(&mut rng),
+            blinding_key: SecretKey::random(&mut rng),
             commitments,
             storage_path,
         }
@@ -292,82 +243,113 @@ impl Client {
         }
     }
 
-    /// Generate a double-hashed commitment from an identifier
-    fn generate_commitment(identifier: &str) -> Vec<u8> {
-        // First hash using SHA256
-        let mut hasher = Sha256::new();
-        hasher.update(identifier.as_bytes());
-        let first_hash = hasher.finalize();
+    /// Generate a blinded commitment from an identifier
+    fn generate_commitment(&self, identifier: &str) -> Vec<u8> {
+        // First blind the identifier
+        let blinded_id = self.blind_identifier(identifier)
+            .expect("Blinding should not fail");
         
-        // Second hash using MerkleHasher (rs_merkle::algorithms::Sha256)
-        let hash = MerkleHasher::hash(&first_hash);
-        hash.to_vec()
+        // Hash the blinded identifier using MerkleHasher
+        MerkleHasher::hash(&blinded_id).to_vec()
     }
 
-    pub fn prepare_registration(&mut self, identifier: &str) -> (String, Vec<u8>) {
-        // Generate the double-hashed commitment
-        let commitment = Self::generate_commitment(identifier);
+    pub fn prepare_registration(&mut self, identifier: &str) -> (Vec<u8>, Vec<u8>) {
+        // Generate the blinded commitment
+        let commitment = self.generate_commitment(identifier);
         
-        // Store the double-hashed commitment
+        // Store the commitment
         self.store_commitment(identifier.to_string(), commitment.clone());
         
-        (identifier.to_string(), commitment)
+        // Blind the identifier for server
+        let blinded_id = self.blind_identifier(identifier)
+            .expect("Blinding should not fail");
+        
+        (blinded_id, commitment)
     }
 
-    pub fn store_merkle_proof(&mut self, identifier: String, _merkle_proof: Vec<u8>) {
-        // We no longer store the proof - it's requested from server when needed
+    pub async fn store_merkle_proof(&mut self, identifier: String, merkle_proof: Vec<u8>) -> Result<(), String> {
+        // Store the Merkle proof for later use in ZKP generation
+        let proof_path = self.storage_path.join(format!("{}.proof", identifier));
+        tokio::fs::write(&proof_path, &merkle_proof)
+            .await
+            .map_err(|e| format!("Failed to store Merkle proof: {}", e))?;
+        Ok(())
     }
 
     pub async fn prepare_lookup(&self, identifier: &str) -> Result<(Prefix, (Vec<u8>, Vec<u8>)), String> {
-        // Retrieve the stored double-hashed commitment
+        // Retrieve the stored commitment
         let commitment = self.commitments.get(identifier)
             .ok_or_else(|| "No commitment found for identifier".to_string())?
             .clone();
 
-        // Get the Merkle proof from the server
-        let merkle_proof = get_merkle_proof_from_server(&commitment).await?;
+        // Try to load stored Merkle proof
+        let proof_path = self.storage_path.join(format!("{}.proof", identifier));
+        let merkle_proof = if let Ok(proof) = tokio::fs::read(&proof_path).await {
+            proof
+        } else {
+            // If no stored proof, get it from server
+            let proof = get_merkle_proof_from_server(&commitment).await?;
+            
+            // Verify the proof against server's root
+            let root = get_merkle_root_from_server().await?;
+            if !verify_merkle_proof(&commitment, &proof, &root)? {
+                return Err("Invalid Merkle proof from server".to_string());
+            }
+            
+            // Store the verified proof
+            self.store_merkle_proof(identifier.to_string(), proof.clone()).await?;
+            proof
+        };
 
-        // Generate ZK proof using the double-hashed commitment
+        // Generate Schnorr-like proof using the commitment and Merkle proof
         let (zk_proof, vk) = generate_proof(&commitment, &merkle_proof)?;
 
         // Get prefix for the bucket lookup
-        let prefix = prefix(&commitment);
+        let prefix = get_prefix(&commitment);
 
         Ok((prefix, (zk_proof, vk)))
     }
 
     fn blind_identifier(&self, identifier: &str) -> Result<Vec<u8>, String> {
-        // Hash the identifier to a 64-bit number
-        let mut hasher = Sha256::new();
-        hasher.update(identifier.as_bytes());
-        let hash = hasher.finalize();
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&hash[0..8]);
-        let num = u64::from_be_bytes(bytes);
-
-        // Use hash_to_curve to get a valid curve point
-        let point = hash_to_curve(num);
-        let pk = PublicKey::from_affine(point.to_affine())
-            .map_err(|e| format!("Failed to create public key: {}", e))?;
+        // Hash the identifier to a curve point
+        let point = hash_to_curve_point(identifier)?;
         
-        let scalar = *self.client_secret.to_nonzero_scalar();
-        let blinded = pk.to_projective() * scalar;
+        // First blinding with client_secret
+        let scalar1 = *self.client_secret.to_nonzero_scalar();
+        let intermediate = point * scalar1;
+        
+        // Second blinding with blinding_key
+        let scalar2 = *self.blinding_key.to_nonzero_scalar();
+        let blinded = intermediate * scalar2;
+        
         Ok(blinded.to_affine().to_encoded_point(false).as_bytes().to_vec())
     }
 
     pub fn unblind_user_id(&self, bucket: &[(Vec<u8>, Vec<u8>)]) -> Option<Uuid> {
-        // Get the inverse of client's secret key for unblinding
-        let scalar = self.client_secret.to_nonzero_scalar().invert().unwrap();
+        // Get the inverse of both blinding factors
+        let scalar1 = self.client_secret.to_nonzero_scalar().invert().unwrap();
+        let scalar2 = self.blinding_key.to_nonzero_scalar().invert().unwrap();
 
-        // Iterate through bucket entries
         for (blinded_id, blinded_uuid) in bucket {
-            // Try to unblind the server-blinded identifier
-            let server_blinded_point = PublicKey::from_encoded_point(
+            // First unblinding of identifier
+            let point1 = ProjectivePoint::from_encoded_point(
                 &EncodedPoint::from_bytes(blinded_id).ok()?
-            ).unwrap().to_projective() * scalar;
-
-            // If we find a match, return the UUID
-            if let Ok(uuid) = Uuid::from_slice(blinded_uuid) {
+            ).unwrap() * scalar1;
+            
+            // Second unblinding of identifier
+            let point2 = point1 * scalar2;
+            
+            // Convert blinded UUID to point
+            let uuid_point = ProjectivePoint::from_encoded_point(
+                &EncodedPoint::from_bytes(blinded_uuid).ok()?
+            ).unwrap();
+            
+            // Unblind UUID with same scalars
+            let unblinded_uuid_point = (uuid_point * scalar1) * scalar2;
+            
+            // Convert to bytes and try to parse as UUID
+            let unblinded_bytes = unblinded_uuid_point.to_affine().to_encoded_point(false).as_bytes();
+            if let Ok(uuid) = Uuid::from_slice(&unblinded_bytes[1..17]) {
                 return Some(uuid);
             }
         }
@@ -426,13 +408,6 @@ pub fn sha256(b: u64) -> [u8; 32] {
         .into()
 }
 
-/// Return an N-byte prefix
-pub fn prefix(bytes: &[u8]) -> Prefix {
-    bytes[..PREFIX_LEN]
-        .try_into()
-        .expect("Should be at least 8 bytes long")
-}
-
 // Helper function to get Merkle proof from server
 async fn get_merkle_proof_from_server(commitment: &[u8]) -> Result<Vec<u8>, String> {
     let mut client = DiscoveryClient::connect("http://[::1]:50051")
@@ -454,4 +429,52 @@ async fn get_merkle_proof_from_server(commitment: &[u8]) -> Result<Vec<u8>, Stri
     }
     
     Ok(inner.merkle_proof)
+}
+
+// Helper function to hash string to curve point
+fn hash_to_curve_point(input: &str) -> Result<ProjectivePoint, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let hash = hasher.finalize();
+    
+    Ok(NistP256::hash_from_bytes::<ExpandMsgXmd<Sha256>>(&[&hash], &[b"rumi"])
+        .map_err(|e| format!("Failed to hash to curve: {}", e))?)
+}
+
+// Helper function to verify a Merkle proof
+fn verify_merkle_proof(commitment: &[u8], proof: &[u8], root: &[u8; 32]) -> Result<bool, String> {
+    let proof = MerkleProof::<MerkleHasher>::from_bytes(proof)
+        .map_err(|e| format!("Failed to deserialize proof: {}", e))?;
+    
+    let leaf_hash = MerkleHasher::hash(commitment);
+    
+    Ok(proof.verify(
+        *root,
+        &[0], // We don't know the index, but it's not needed for verification
+        &[leaf_hash],
+        1 << ORAM_DEPTH, // Tree size
+    ))
+}
+
+// Helper function to get Merkle root from server
+async fn get_merkle_root_from_server() -> Result<[u8; 32], String> {
+    let mut client = DiscoveryClient::connect("http://[::1]:50051")
+        .await
+        .map_err(|e| format!("Failed to connect to server: {}", e))?;
+        
+    let request = tonic::Request::new(GetMerkleRootRequest {});
+    
+    let response = client
+        .get_merkle_root(request)
+        .await
+        .map_err(|e| format!("Failed to get Merkle root: {}", e))?;
+        
+    let inner = response.into_inner();
+    if !inner.success {
+        return Err(inner.message);
+    }
+    
+    let mut root = [0u8; 32];
+    root.copy_from_slice(&inner.root);
+    Ok(root)
 }

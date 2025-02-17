@@ -2,6 +2,7 @@ use crate::rumi_proto::{
     discovery_server::{Discovery, DiscoveryServer},
     FindRequest, FindResponse, GetPublicSetRequest, GetPublicSetResponse, RegisterRequest,
     RegisterResponse, BucketEntry, GetMerkleProofRequest, GetMerkleProofResponse,
+    GetMerkleRootRequest, GetMerkleRootResponse,
 };
 use console::style;
 use lazy_static::lazy_static;
@@ -214,6 +215,34 @@ impl Discovery for DiscoveryService {
                     merkle_proof: vec![],
                 })),
             }
+        };
+
+        timer.observe_duration();
+        result
+    }
+
+    #[instrument(skip(self, request), name = "get_merkle_root", ret)]
+    async fn get_merkle_root(
+        &self,
+        request: Request<GetMerkleRootRequest>,
+    ) -> Result<Response<GetMerkleRootResponse>, Status> {
+        let timer = REQUEST_DURATION
+            .with_label_values(&["get_merkle_root"])
+            .start_timer();
+        REQUEST_COUNTER.with_label_values(&["get_merkle_root"]).inc();
+
+        let result = {
+            let server = self
+                .server
+                .lock()
+                .map_err(|_| Status::internal("Server lock poisoned"))?;
+            
+            let root = server.get_merkle_root();
+            Ok(Response::new(GetMerkleRootResponse {
+                success: true,
+                message: "Successfully retrieved Merkle root".to_string(),
+                root: root.to_vec(),
+            }))
         };
 
         timer.observe_duration();

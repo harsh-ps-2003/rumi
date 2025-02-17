@@ -54,6 +54,7 @@ ark-snark = "0.5"
 ark-groth16 = "0.5"
 ark-serialize = "0.5"
 dirs = "5.0"
+ark-crypto-primitives = { version = "0.5.0", features = ["r1cs", "crh", "merkle_tree", "sponge"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

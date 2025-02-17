@@ -1,5 +1,5 @@
 /*
-A simple Path ORAM implementation
+A Path ORAM implementation for privacy-preserving identifier-UUID mapping
 */
 
 use rand::{CryptoRng, RngCore};
@@ -13,6 +13,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 pub const ORAM_DEPTH: usize = 20;
 // The number of blocks that can be stored in each node of the tree
 pub const BUCKET_SIZE: usize = 4;
+// Number of dummy accesses to perform for each real access
+pub const DUMMY_ACCESSES: usize = 3;
 
 // Read/Write ORAM operations
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,11 +24,10 @@ pub enum Operation {
 }
 
 // Represents a block of data in the ORAM
-// Zeroize and ZeroizeOnDrop ensure secure deletion of sensitive data
 #[derive(Serialize, Deserialize, Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ORAMBlock {
-    id: u64,       // Unique identifier for the block
-    data: Vec<u8>, // The actual data stored in the block
+    pub blinded_identifier: Vec<u8>,     // Blinded identifier
+    pub blinded_user_id: Vec<u8>,   // Blinded UUID
 }
 
 // The main Path ORAM structure
@@ -34,8 +35,8 @@ pub struct ORAMBlock {
 pub struct PathORAM {
     // The binary tree structure. Each node is a bucket that can hold up to BUCKET_SIZE blocks
     tree: Vec<Vec<Option<ORAMBlock>>>,
-    // Maps block IDs to their current path in the tree
-    position_map: HashMap<u64, usize>,
+    // Maps commitment prefixes to their current path in the tree
+    position_map: HashMap<[u8; 8], usize>,
     // Temporary storage for blocks during ORAM operations
     stash: Vec<ORAMBlock>,
 }
@@ -53,17 +54,18 @@ impl PathORAM {
     }
 
     // Main access function for reading or writing data
-    #[instrument(skip(self, rng), fields(id = %id, operation = ?op), ret)]
+    #[instrument(skip(self, rng), fields(prefix = ?prefix, operation = ?op), ret)]
     pub fn access(
         &mut self,
         op: Operation,
-        id: u64,
-        data: Option<Vec<u8>>,
+        prefix: [u8; 8],
+        block: Option<ORAMBlock>,
         rng: &mut (impl CryptoRng + RngCore),
-    ) -> Option<Vec<u8>> {
+    ) -> Option<Vec<ORAMBlock>> {
+        // Get current path for the prefix
         let path = *self
             .position_map
-            .entry(id)
+            .entry(prefix)
             .or_insert_with(|| rng.next_u32() as usize % (1 << ORAM_DEPTH));
 
         // Generate new path for next access
@@ -73,48 +75,43 @@ impl PathORAM {
         let blocks = self.read_path(path);
         self.stash.extend(blocks);
 
-        // Find the target block in stash
+        // Perform the actual operation
         let result = match op {
-            Operation::Read => self
-                .stash
-                .iter()
-                .find(|b| b.id == id)
-                .map(|b| b.data.clone()),
+            Operation::Read => {
+                // Find all blocks with matching prefix
+                let matching_blocks: Vec<ORAMBlock> = self.stash
+                    .iter()
+                    .filter(|b| get_prefix(&b.blinded_identifier) == prefix)
+                    .cloned()
+                    .collect();
+                Some(matching_blocks)
+            }
             Operation::Write => {
-                if let Some(data) = data {
-                    // Update existing block or add new one
-                    if let Some(block) = self.stash.iter_mut().find(|b| b.id == id) {
-                        block.data = data;
-                    } else {
-                        self.stash.push(ORAMBlock { id, data });
-                    }
+                if let Some(block) = block {
+                    // Add new block to stash
+                    self.stash.push(block);
                     // Update position map
-                    self.position_map.insert(id, new_path);
+                    self.position_map.insert(prefix, new_path);
                 }
                 None
             }
         };
 
-        // Write blocks back to tree
+        // Write blocks back to tree along new path
         self.write_path(new_path);
 
-        // Ensure stash doesn't grow unbounded
-        while self.stash.len() > BUCKET_SIZE * ORAM_DEPTH {
-            if let Some(block) = self.stash.pop() {
-                let block_path = self.position_map[&block.id];
-                let mut current_node = block_path + (1 << ORAM_DEPTH) - 1;
-                while current_node > 0 {
-                    if let Some(empty_slot) = self.tree[current_node]
-                        .iter_mut()
-                        .find(|slot| slot.is_none())
-                    {
-                        *empty_slot = Some(block);
-                        break;
-                    }
-                    current_node = (current_node - 1) / 2;
-                }
-            }
+        // Perform dummy accesses to hide access patterns
+        for _ in 0..DUMMY_ACCESSES {
+            let dummy_path = rng.next_u32() as usize % (1 << ORAM_DEPTH);
+            let dummy_blocks = self.read_path(dummy_path);
+            self.stash.extend(dummy_blocks);
+            // Write back along a new random path
+            let new_dummy_path = rng.next_u32() as usize % (1 << ORAM_DEPTH);
+            self.write_path(new_dummy_path);
         }
+
+        // Evict blocks from stash
+        self.evict_from_stash(rng);
 
         result
     }
@@ -153,8 +150,9 @@ impl PathORAM {
         let mut bucket = Vec::new();
         // Select blocks from the stash that belong to this path
         self.stash.retain(|block| {
+            let prefix = get_prefix(&block.blinded_identifier);
             if bucket.len() < BUCKET_SIZE
-                && path_to_root.contains(&(self.position_map[&block.id] + (1 << ORAM_DEPTH) - 1))
+                && path_to_root.contains(&(self.position_map[&prefix] + (1 << ORAM_DEPTH) - 1))
             {
                 bucket.push(Some(block.clone()));
                 false // Remove from stash
@@ -194,25 +192,21 @@ impl PathORAM {
         self.stash.zeroize();
     }
 
-    pub fn get_all_identifiers(&self) -> Vec<u64> {
-        self.position_map.keys().cloned().collect()
-    }
-
     // Helper function to check if a block exists
-    pub fn contains(&self, id: u64) -> bool {
-        if self.position_map.contains_key(&id) {
+    pub fn contains(&self, prefix: &[u8; 8]) -> bool {
+        if self.position_map.contains_key(prefix) {
             return true;
         }
 
         // Also check stash and tree for the block
-        if self.stash.iter().any(|block| block.id == id) {
+        if self.stash.iter().any(|block| get_prefix(&block.blinded_identifier) == *prefix) {
             return true;
         }
 
         for bucket in &self.tree {
             if bucket
                 .iter()
-                .any(|block| block.as_ref().map_or(false, |b| b.id == id))
+                .any(|block| block.as_ref().map_or(false, |b| get_prefix(&b.blinded_identifier) == *prefix))
             {
                 return true;
             }
@@ -241,4 +235,59 @@ impl PathORAM {
         }
         total + self.stash.len()
     }
+
+    // Helper function to evict blocks from stash
+    fn evict_from_stash(&mut self, rng: &mut (impl CryptoRng + RngCore)) {
+        // Try to evict blocks while stash is larger than threshold
+        while self.stash.len() > BUCKET_SIZE * ORAM_DEPTH {
+            // Choose a random path to evict along
+            let evict_path = rng.next_u32() as usize % (1 << ORAM_DEPTH);
+            
+            // Get all nodes along the path
+            let mut current_node = evict_path + (1 << ORAM_DEPTH) - 1;
+            let mut path_nodes = vec![current_node];
+            while current_node > 0 {
+                current_node = (current_node - 1) / 2;
+                path_nodes.push(current_node);
+            }
+
+            // Try to evict blocks that can go along this path
+            let mut remaining_stash = Vec::new();
+            for block in self.stash.drain(..) {
+                let block_prefix = get_prefix(&block.blinded_identifier);
+                let block_path = self.position_map[&block_prefix];
+                
+                // Check if block can go on eviction path
+                if path_nodes.iter().any(|&node| {
+                    let bucket = &mut self.tree[node];
+                    if let Some(empty_slot) = bucket.iter_mut().find(|slot| slot.is_none()) {
+                        *empty_slot = Some(block.clone());
+                        true
+                    } else {
+                        false
+                    }
+                }) {
+                    // Block was evicted successfully
+                    continue;
+                }
+                
+                // Block couldn't be evicted, keep in stash
+                remaining_stash.push(block);
+            }
+            
+            self.stash = remaining_stash;
+            
+            // If we can't evict any more blocks, stop trying
+            if self.stash.len() >= BUCKET_SIZE * ORAM_DEPTH {
+                break;
+            }
+        }
+    }
+}
+
+// Helper function to get prefix from commitment
+fn get_prefix(commitment: &[u8]) -> [u8; 8] {
+    let mut prefix = [0u8; 8];
+    prefix.copy_from_slice(&commitment[..8]);
+    prefix
 }

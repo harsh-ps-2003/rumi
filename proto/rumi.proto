@@ -3,23 +3,36 @@ package rumi;
 
 // The discovery service definition
 service Discovery {
-    // Get the set of registered identifiers and current Merkle root
+    // Get the current Merkle root
+    rpc GetMerkleRoot (GetMerkleRootRequest) returns (GetMerkleRootResponse);
+    
+    // Get the current public set
     rpc GetPublicSet (GetPublicSetRequest) returns (GetPublicSetResponse);
     
-    // Find a user by their identifier
+    // Find a user by their blinded identifier
     rpc Find (FindRequest) returns (FindResponse);
     
-    // Register a new identifier-UUID pair
+    // Register a new blinded identifier-UUID pair
     rpc Register(RegisterRequest) returns (RegisterResponse);
 
     // Get Merkle proof for a commitment
     rpc GetMerkleProof (GetMerkleProofRequest) returns (GetMerkleProofResponse);
 }
 
-// Request for getting the public set of identifiers
+// Request for getting the current Merkle root
+message GetMerkleRootRequest {}
+
+// Response containing the current Merkle root
+message GetMerkleRootResponse {
+    bool success = 1;  // Whether root retrieval was successful
+    string message = 2;  // Error message if unsuccessful
+    bytes root = 3;  // The current Merkle root
+}
+
+// Request for getting the current Merkle root
 message GetPublicSetRequest {}
 
-// Response containing the public set of identifiers
+// Response containing the current Merkle root
 message GetPublicSetResponse {
     bytes merkle_root = 1;  // Current Merkle root for verification
 }
@@ -33,8 +46,8 @@ message FindRequest {
 
 // A bucket entry in the response
 message BucketEntry {
-    bytes double_blinded_identifier = 1;  // Server-blinded identifier
-    bytes blinded_user_id = 2;  // Client-blinded UUID
+    bytes blinded_identifier = 1;  // Client-blinded identifier
+    bytes blinded_uuid = 2;  // Client-blinded UUID
 }
 
 // Response for finding a user
@@ -44,7 +57,7 @@ message FindResponse {
 
 // Request for registering a new identifier-UUID pair
 message RegisterRequest {
-    string identifier = 1;  // Original identifier
+    bytes blinded_identifier = 1;  // Client-blinded identifier
     bytes uuid = 2;  // UUID to register
     bytes commitment = 3;  // Commitment to the identifier
 }
