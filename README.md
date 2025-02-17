@@ -34,13 +34,6 @@ Then, to start the server, run `cargo run --bin server` in one terminal.
 The server will start with 100 demo identifiers (1000000000 through 1000000099).
 Register the identifier you want to lookup later using `cargo run --bin client register 1000000042 $UUID` Run `cargo run --bin client lookup 1000000042` in another terminal to start the client and lookup for a valid identifier. Run `cargo run --bin client lookup 9999999999` to lookup a invalid identifier.
 
-The registration process isn't a simple "add to list" operation. It's a carefully designed cryptographic protocol that ensures:
-The server never learns the cleartext phone number.
-The server never learns the cleartext UUID.
-The server cannot link a phone number to its corresponding UUID without the client's cooperation (specifically, without the client's secret).
-The server's access patterns are hidden by ORAM.
-This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
-
 ## Protocol Flow
 
 ```mermaid
@@ -180,6 +173,14 @@ If a match is found (let's say the matching entry is (`double_blinded_bob_number
 *Now, `retrieved_uuid` should be equal to `UUID_BOB`.
 
 Result: Alice's app now knows that Bob is on SecureChat and has his internal app ID (UUID_BOB). Alice can now initiate a chat with Bob within the app, using UUID_BOB for all further interactions.
+
+The registration process isn't a simple "add to list" operation. It's a carefully designed cryptographic protocol that ensures:
+* The server never learns the cleartext phone number.
+* The server never learns the cleartext UUID.
+* The server cannot link a phone number to its corresponding UUID without the client's cooperation (specifically, without the client's secret).
+* The server's access patterns are hidden by ORAM.
+
+This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
 
 ## Architecture
 

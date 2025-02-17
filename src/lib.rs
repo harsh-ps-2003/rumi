@@ -137,10 +137,11 @@ impl Server {
         // Un-blind the double blinded point by removing the server's secret
         let blinded_user_id_point =
             AffinePoint::from_encoded_point(blinded_user_id).expect("Invalid point");
-        let user_id_point = (blinded_user_id_point * self.server_secret.invert().expect("Should be invertible"))
-            .to_affine()
-            .to_encoded_point(true);
-            
+        let user_id_point = (blinded_user_id_point
+            * self.server_secret.invert().expect("Should be invertible"))
+        .to_affine()
+        .to_encoded_point(true);
+
         // Extract UUID from the unblinded point
         Uuid::from_slice(&user_id_point.as_bytes()[1..17]).ok()
     }
@@ -182,7 +183,7 @@ impl Server {
         let hashed_identifier = sha256(identifier);
         let blinded_identifier_point = hash_to_curve(identifier) * self.server_secret;
         let user_id_point = encode_to_point(user_id);
-        
+
         // Use the hashed identifier as a scalar for blinding the user ID
         let hashed_identifier_scalar = Scalar::reduce_nonzero_bytes(&hashed_identifier.into());
         let blinded_user_id = (user_id_point * self.server_secret) * hashed_identifier_scalar;
