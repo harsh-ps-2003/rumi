@@ -2,7 +2,7 @@
 
 A privacy-preserving discovery service design for mapping distinct identifiers to IDs without revealing any information to the server!
 
-## Use cases 
+## Why? Whats the use?
 
 Imagine you download a typical messaging app. To find your friends, it usually asks for access to your entire contact list. You grant it permission (because you want to find your friends!), and the app uploads all your contacts' phone numbers (or sometimes even more data) to its servers. Here's why this is problematic:
 
@@ -12,7 +12,7 @@ Imagine you download a typical messaging app. To find your friends, it usually a
 
 * Potential for Abuse: Even if the app company is well-intentioned, the data could be misused. Imagine a rogue employee accessing your contact list, or a government demanding access to the data.
 
-The motivating solution - Imagine a new messaging app. Users want to find their existing contacts who are also on the app, without revealing their entire contact list to the service. Basically a [Private Set Intersection](https://en.wikipedia.org/wiki/Private_set_intersection)!
+The motivating solution - Imagine a new messaging app. Users want to find their existing contacts who are also on the app, without revealing their entire contact list to the service. Basically sort of a [Private Set Intersection](https://en.wikipedia.org/wiki/Private_set_intersection)!
 
 The phone number is the public identifier, while the UUID is private to the app. The user's contact list is private and remains on the phone. The app only processes individual contacts from this list one at a time, locally, preventing the server from ever seeing the complete list.
 
@@ -182,8 +182,7 @@ The registration process isn't a simple "add to list" operation. It's a carefull
 
 This privacy is maintained even during the lookup phase. The server facilitates the matching process, but it remains oblivious to the actual values being matched.
 
-*Please note that a simplified form of ZKSM is implemented right now (not a full fledged ZK-SNARK or ZK-STARK). It's more of a custom protocol that demonstrates the basic idea of proving set membership with some level of privacy. It's important to understand that this current implementation is not cryptographically secure in a real-world setting. While the server doesn't learn the exact identifier directly, it does learn that the identifier is somewhere in the registered set. A true zero-knowledge proof should reveal absolutely nothing about the secret, not even its membership in a specific set. The server also learns the commitment, which is related to the identifier.
-The ZKSM protocol is highly simplified and lacks many of the security features of real zk-SNARKs or zk-STARKs. It's vulnerable to various attacks that a production-ready system would need to address.*
+*Please note that a simplified form of ZKSM is implemented right now (not a full fledged ZK-SNARK or ZK-STARK). It's more of a custom protocol that demonstrates the basic idea of proving set membership with some level of privacy. It's important to understand that this current implementation is not cryptographically secure in a real-world setting. While the server doesn't learn the exact identifier directly, it does learn that the identifier is somewhere in the registered set. A true zero-knowledge proof should reveal absolutely nothing about the secret, not even its membership in a specific set. The server also learns the commitment, which is related to the identifier. The ZKSM protocol is highly simplified and lacks many of the security features of real zk-SNARKs or zk-STARKs. It's vulnerable to various attacks that a production-ready system would need to address.*
 
 ## Architecture
 
@@ -288,16 +287,6 @@ docker compose build client
 
 # View logs
 docker compose logs -f server
-```
-
-### Development Commands
-
-```bash
-# Run server with debug logging
-RUST_LOG=debug cargo run --bin server
-
-# Run client
-cargo run --bin client -- lookup 1000000001
 ```
 
 ### References
