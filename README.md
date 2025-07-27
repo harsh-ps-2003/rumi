@@ -332,4 +332,4 @@ Also, `tokio-console` can be used for more performance monitoring.
 
 Not designed to be used in production!
 
-This is a personal project to deepen the understanding of Cryptography after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur.
+This is an Undergraduate Project under Professor Adithya Vadapalli to explore privacy-preserving chat systems, after undertaking the course [CS670](https://www.cse.iitk.ac.in/pages/CS670.html) from IIT Kanpur.
